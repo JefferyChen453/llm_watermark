@@ -1,0 +1,11 @@
+[project]
+name = "llm-watermark"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ninja>=1.13.0",
+    "packaging>=25.0",
+    "scipy>=1.15.3",
+]
