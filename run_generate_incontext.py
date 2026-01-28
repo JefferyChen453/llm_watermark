@@ -10,64 +10,15 @@ from transformers import (
     AutoTokenizer,
     LlamaTokenizer,
 )
-from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
+from gptwm_incontext import InContextWatermarkGenerator, tokenize_fn_with_chat_template, get_incontext_system_prompt
 from dataset import load_generation_dataset
-
-
-def tokenize_fn_with_chat_template(tokenizer, system_prompt: str):
-    """Create a tokenize function that applies chat template with system prompt."""
-    def _fn(batch):
-        user_prompts = batch["prefix"]
-        
-        # Apply chat template to each prompt
-        prompt_texts = []
-        for user_prompt in user_prompts:
-            if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
-                # Use chat template
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-                prompt_text = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False
-                )
-                prompt_texts.append(prompt_text)
-            else:
-                # Fallback: manual formatting for models without chat template
-                full_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-                prompt_texts.append(full_prompt)
-        
-        # Batch encode all prompts
-        prefix_enc = tokenizer(
-            prompt_texts,
-            truncation=True,
-            padding=True,
-        )
-        
-        # Also tokenize gold completions for reference
-        gold_enc = tokenizer(
-            batch["gold_completion"],
-            truncation=True,
-            padding=True,
-        )
-
-        return {
-            "input_ids": prefix_enc["input_ids"],
-            "attention_mask": prefix_enc["attention_mask"],
-            "gold_completion_ids": gold_enc["input_ids"],
-        }
-
-    return _fn
+from transformers import AutoConfig
 
 
 def main(args):
     output_file = (
         f"{args.output_dir}/"
         f"{args.model_name.replace('/', '-')}_"
-        f"strength_{args.strength}_"
         f"frac_{args.fraction}_"
         f"len_{args.max_new_tokens}_"
         f"num_{args.num_test}_incontext.jsonl"
@@ -84,63 +35,64 @@ def main(args):
             tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"
 
+    # model
+    config = AutoConfig.from_pretrained(args.model_name, trust_remote_code=True)
+    if args.yarn:
+        config.rope_scaling = {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768
+        }
+
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
+        config=config,
         device_map="auto",
-        dtype=torch.bfloat16,
-        trust_remote_code=True,
+        dtype=torch.bfloat16
     )
     model.eval()
-    import ipdb; ipdb.set_trace()
 
     # Initialize in-context watermark generator
     watermark_generator = InContextWatermarkGenerator(
         fraction=args.fraction,
-        strength=args.strength,  # Not used in in-context, but kept for compatibility
-        vocab_size=model.config.vocab_size,
+        vocab_size=tokenizer.vocab_size,
+        model_emb_length=model.config.vocab_size,
         watermark_key=args.wm_key,
         only_English=args.only_English,
         tokenizer=tokenizer
     )
     
     # Generate green word list
-    green_word_list_str = watermark_generator.format_green_word_list()
-    system_prompt = get_incontext_system_prompt(green_word_list_str)
+    green_token_string = watermark_generator.get_green_token_string()
+    system_prompt = get_incontext_system_prompt(green_token_string)
     
-    print(f"Green word list contains {len(green_word_list_str.split(', '))} words")
-    print(f"System prompt length: {len(system_prompt)} characters")
-
     # load dataset
-    ds = load_generation_dataset(args.prompt_file, args.num_test)
+    ds = load_generation_dataset(args.prompt_file, args.num_test).to_iterable_dataset()
 
     # Tokenize with chat template
     ds = ds.map(
         tokenize_fn_with_chat_template(tokenizer, system_prompt),
         batched=True,
-        remove_columns=ds.column_names,
+        remove_columns=ds.column_names
     )
 
     ds = ds.with_format("torch")
 
     outputs = []
-    # import ipdb; ipdb.set_trace()
-    for batch in tqdm(ds.iter(batch_size=128), desc="Generating"):
+    for batch in tqdm(ds.iter(batch_size=32), desc="Generating"):
         generation_config = {
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),
-            "logits_processor": None,  # No logits processor for in-context watermark
             "max_new_tokens": args.max_new_tokens,
             "return_dict_in_generate": True,
         }
 
         if args.beam_size is not None:
-            # beam search
             generation_config.update({
                 "num_beams": args.beam_size,
                 "do_sample": False,
             })
         else:
-            # sampling
             generation_config.update({
                 "do_sample": True,
                 "top_k": args.top_k,
@@ -190,11 +142,11 @@ if __name__ == "__main__":
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
     parser.add_argument("--top_p", type=float, default=0.9)
-
+    parser.add_argument("--yarn", action="store_true")
+    
     # Watermark parameters
     parser.add_argument_group("Watermark")
     parser.add_argument("--fraction", type=float, default=0.5)
-    parser.add_argument("--strength", type=float, default=2.0)  # Not used in in-context, kept for compatibility
     parser.add_argument("--wm_key", type=int, default=0)
     parser.add_argument("--only_English", action="store_true")
 
@@ -202,7 +154,7 @@ if __name__ == "__main__":
     parser.add_argument_group("Data")
     parser.add_argument("--prompt_file", type=str, default="./UnigramWatermark/data/LFQA/inputs.jsonl")
     parser.add_argument("--output_dir", type=str, default="./test")
-    parser.add_argument("--num_test", type=int, default=500)
+    parser.add_argument("--num_test", type=int, default=512)
 
     args = parser.parse_args()
     main(args)

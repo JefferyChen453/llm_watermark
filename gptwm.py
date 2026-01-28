@@ -28,7 +28,8 @@ class GPTWatermarkBase:
         self, 
         fraction: float = 0.5, 
         strength: float = 2.0, 
-        vocab_size: int = 50257, 
+        vocab_size: int = None, 
+        model_emb_length: int = None,
         watermark_key: int = 0,
         only_English: bool = False,
         tokenizer: Optional[object] = None
@@ -51,7 +52,7 @@ class GPTWatermarkBase:
                 raise ValueError("No English tokens found in vocabulary")
             
             # Initialize mask with all False
-            mask = np.zeros(vocab_size, dtype=bool)
+            mask = np.zeros(model_emb_length, dtype=bool)
             
             # Only assign green-list to English tokens
             num_green_english = int(fraction * len(self.english_token_ids))
@@ -62,9 +63,13 @@ class GPTWatermarkBase:
             for i, token_id in enumerate(self.english_token_ids):
                 mask[token_id] = english_mask[i]
         else:
-            # Original behavior: assign green-list to all tokens
-            mask = np.array([True] * int(fraction * vocab_size) + [False] * (vocab_size - int(fraction * vocab_size)))
+            green_list_size = int(fraction * vocab_size)
+            mask = np.array([True] * green_list_size + [False] * (vocab_size - green_list_size))
             rng.shuffle(mask)
+            mask = np.concatenate([
+                mask,
+                np.zeros(model_emb_length - len(mask), dtype=bool),
+            ]) # handle the case when model_emb_length > vocab_size
 
         self.green_list_mask = torch.tensor(mask, dtype=torch.float32)
         self.strength = strength
@@ -141,6 +146,7 @@ class GPTWatermarkDetector(GPTWatermarkBase):
     def detect(self, sequence: List[int]) -> float:
         """Detect the watermark in a sequence of tokens and return the z value."""
         green_tokens = int(sum(self.green_list_mask[i] for i in sequence))
+
         return self._z_score(green_tokens, len(sequence), self.fraction)
 
     def unidetect(self, sequence: List[int]) -> float:

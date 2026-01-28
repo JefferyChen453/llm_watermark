@@ -3,6 +3,7 @@
 Evaluate watermark detection performance by calculating FPR, TPR, TNR, FNR.
 """
 
+import argparse
 import json
 import os
 import re
@@ -60,9 +61,9 @@ def calculate_tpr(z_scores: List[float], tau: float) -> float:
     return count / len(z_scores)
 
 
-def find_threshold(z_scores: List[float], target_fpr: float = 0.1) -> float:
+def find_threshold(z_scores: List[float], target_fpr: float = 0.01) -> float:
     """
-    Find threshold tau from tau_list (7.0 to 0.0, step=-0.5) 
+    Find threshold tau from tau_list (0.0 to 7.0, step=0.5) 
     such that FPR < target_fpr.
     """
     tau_list = [0.0 + i * 0.5 for i in range(int((7.0 - 0.0) / 0.5) + 1)]
@@ -77,13 +78,14 @@ def find_threshold(z_scores: List[float], target_fpr: float = 0.1) -> float:
     # return tau_list[-1]
 
 
-def process_directory(directory: str, output_csv: str = None):
+def process_directory(directory: str, output_csv: str = None, tau_thres: float = None):
     """
     Process all _z.jsonl files in the directory and calculate metrics.
     
     Args:
         directory: Path to directory containing _z.jsonl files
         output_csv: Path to output CSV file (default: same directory as input)
+        tau_thres: If provided, use this threshold directly; otherwise find via find_threshold()
     """
     directory = Path(directory)
     
@@ -134,10 +136,14 @@ def process_directory(directory: str, output_csv: str = None):
         if avg_ppl_0 is not None:
             print(f"  avg_ppl: {avg_ppl_0:.4f}")
         
-        # Find threshold tau for this group
-        print("Finding threshold tau...")
-        tau = find_threshold(z_scores_0, target_fpr=0.1)
-        print(f"Found threshold tau = {tau}")
+        # Find or use threshold tau for this group
+        if tau_thres is not None:
+            tau = tau_thres
+            print(f"Using provided threshold tau = {tau}")
+        else:
+            print("Finding threshold tau...")
+            tau = find_threshold(z_scores_0, target_fpr=0.01)
+            print(f"Found threshold tau = {tau}")
         
         # Calculate FPR for strength=0.0
         fpr = calculate_fpr(z_scores_0, tau)
@@ -223,14 +229,26 @@ def process_directory(directory: str, output_csv: str = None):
 
 
 if __name__ == '__main__':
-    import sys
-    
-    if len(sys.argv) < 2:
-        print("Usage: python evaluate.py <directory> [output_csv]")
-        print("Example: python evaluate.py /path/to/directory")
-        sys.exit(1)
-    
-    directory = sys.argv[1]
-    output_csv = sys.argv[2] if len(sys.argv) > 2 else None
-    
-    process_directory(directory, output_csv)
+    parser = argparse.ArgumentParser(
+        description='Evaluate watermark detection performance by calculating FPR, TPR, TNR, FNR.'
+    )
+    parser.add_argument(
+        'directory',
+        help='Path to directory containing _z.jsonl files'
+    )
+    parser.add_argument(
+        'output_csv',
+        nargs='?',
+        default=None,
+        help='Path to output CSV file (default: <directory>/<model_name>_evaluation.csv)'
+    )
+    parser.add_argument(
+        '--tau_thres',
+        type=float,
+        default=None,
+        metavar='TAU',
+        help='Use this threshold directly instead of finding via find_threshold(); all only_English groups use the same tau'
+    )
+    args = parser.parse_args()
+
+    process_directory(args.directory, args.output_csv, args.tau_thres)

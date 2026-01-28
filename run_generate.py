@@ -1,4 +1,4 @@
-
+import os
 import argparse
 import json
 import torch
@@ -28,6 +28,7 @@ def main(args):
     # tokenizer
     if 'decapoda-research-llama-7B-hf' in args.model_name:
         tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
+        tokenizer.pad_token = tokenizer.eos_token
     else:
         tokenizer = AutoTokenizer.from_pretrained(args.model_name)
         if tokenizer.pad_token is None:
@@ -45,7 +46,8 @@ def main(args):
         GPTWatermarkLogitsWarper(
             fraction=args.fraction,
             strength=args.strength,
-            vocab_size=model.config.vocab_size,
+            vocab_size=tokenizer.vocab_size,
+            model_emb_length=model.config.vocab_size,
             watermark_key=args.wm_key,
             only_English=args.only_English,
             tokenizer=tokenizer
@@ -120,8 +122,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Model generation parameters
-    parser.add_argument_group("Model Generation")
-    parser.add_argument("--model_name", type=str, default="baffo32/decapoda-research-llama-7B-hf")
+    parser.add_argument_group("Generation")
+    parser.add_argument("--model_name", type=str)
     parser.add_argument("--max_new_tokens", type=int, default=200)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
@@ -141,4 +143,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_test", type=int, default=500)
 
     args = parser.parse_args()
+
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir, exist_ok=True)
+    
     main(args)

@@ -20,14 +20,15 @@ def main(args):
     model_config = AutoConfig.from_pretrained(args.model_name)
     detector = GPTWatermarkDetector(fraction=args.fraction,
                                     strength=args.strength,
-                                    vocab_size=model_config.vocab_size,
+                                    vocab_size=tokenizer.vocab_size,
+                                    model_emb_length=model_config.vocab_size,
                                     watermark_key=args.wm_key,
                                     only_English=args.only_English,
                                     tokenizer=tokenizer)
 
     z_score_list = []
     for idx, cur_data in tqdm(enumerate(data), total=len(data)):
-        gen_tokens = tokenizer(cur_data['gen_completion'], add_special_tokens=False)["input_ids"]
+        gen_tokens = tokenizer(cur_data['gen_completion'][0], add_special_tokens=False)["input_ids"]
         if len(gen_tokens) >= args.test_min_tokens:
             z_score_list.append(detector.detect(gen_tokens))
         else:
@@ -38,6 +39,7 @@ def main(args):
         'wm_pred': [1 if z > args.threshold else 0 for z in z_score_list]
     }
 
+    print(save_dict['wm_pred'])
     with open(args.input_file.replace('.jsonl', '_z.jsonl'), 'w') as f:
         json.dump(save_dict, f)
         print("Results saved to:", args.input_file.replace('.jsonl', '_z.jsonl'))
