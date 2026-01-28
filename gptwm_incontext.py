@@ -34,7 +34,7 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
             if s is not None and s.strip() != "":
                 green_token_list.append(s.strip())
         
-        return "|".join(green_token_list)
+        return " | ".join(green_token_list)
 
 def tokenize_fn_with_chat_template(tokenizer, system_prompt: str):
     """Create a tokenize function that applies chat template with system prompt."""
@@ -80,17 +80,17 @@ def get_incontext_system_prompt(green_token_string: str) -> str:
     if green_token_string != "":
         system_prompt = f"""### Green Token List: {green_token_string}
 
-    ### Command:
-    You are given a predefined Green Token List, separated by "|". For each user query, generate a response that is:
-    1. Clear & Coherent: Easy to follow and logically organized.
-    2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
-    3. Contextually Relevant: Directly addresses the user's intent and context.
-    4. "Green Token" Enriched (Most Important!): Try your best to seamlessly incorporate as many tokens from the Green Token List as possible — without compromising text quality. Do not claim what green tokens you used explicitly."""
+### Command:
+You are given a predefined Green Token List, separated by "|". For each user query, generate a response that is:
+1. Clear & Coherent: Easy to follow and logically organized.
+2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
+3. Contextually Relevant: Directly addresses the user's intent and context.
+4. "Green Token" Enriched (Most Important!): Try your best to seamlessly incorporate as many tokens from the Green Token List as possible — without compromising text quality. Do not claim what green tokens you used explicitly."""
     else:
         system_prompt = """
-    ### Command:
-    You are given a user query. Generate a response that is:
-    1. Clear & Coherent: Easy to follow and logically organized.
-    2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
-    3. Contextually Relevant: Directly addresses the user's intent and context."""
+### Command:
+You are given a user query. Generate a response that is:
+1. Clear & Coherent: Easy to follow and logically organized.
+2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
+3. Contextually Relevant: Directly addresses the user's intent and context."""
     return system_prompt
