@@ -68,7 +68,7 @@ def main(args):
 
     outputs = []
 
-    for batch in tqdm(ds.iter(batch_size=128), desc="Generating"):
+    for batch in tqdm(ds.iter(batch_size=1), desc="Generating"):
         generation_config = {
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),

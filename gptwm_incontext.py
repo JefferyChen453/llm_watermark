@@ -65,6 +65,44 @@ def tokenize_fn_with_chat_template(tokenizer, system_prompt: str):
 
     return _fn
 
+def tokenize_fn_with_chat_template_ids(tokenizer, system_prompt: str):
+    """Create a tokenize function that applies chat template with system prompt."""
+    def _fn(batch):
+        user_prompts = batch["prefix"]
+        input_prompts = []
+        for user_prompt in user_prompts:
+            if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+                prompt_text = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False
+                )
+                input_prompts.append(prompt_text)
+            else:
+                full_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
+                input_prompts.append(full_prompt)
+        encoded_prompts = tokenizer(
+            input_prompts,
+            return_tensors="pt",
+            add_special_tokens=False,
+            padding=True,
+            truncation=True,
+        )
+        print(encoded_prompts["input_ids"].shape)
+
+        batch.update({
+            "input_prompts": input_prompts,
+            **encoded_prompts
+        })
+        return batch
+
+    return _fn
+
 
 
 def get_incontext_system_prompt(green_token_string: str) -> str:

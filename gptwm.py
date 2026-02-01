@@ -22,7 +22,8 @@ class GPTWatermarkBase:
     @staticmethod
     def is_english_token(token: str) -> bool:
         """Check if a token is English (ASCII characters only, excluding first character)."""
-        return all(ord(c) < 128 for c in token[1:])
+        import pdb; pdb.set_trace()
+        return all(ord(c) < 128 for c in token)
 
     def __init__(
         self, 
@@ -45,7 +46,7 @@ class GPTWatermarkBase:
             vocab = self.tokenizer.get_vocab()
             self.english_token_ids = [
                 tid for tok, tid in vocab.items() 
-                if self.is_english_token(tok) and tid < vocab_size
+                if self.is_english_token(self.tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
             ]
             
             if len(self.english_token_ids) == 0:

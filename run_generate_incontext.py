@@ -10,7 +10,7 @@ from transformers import (
     AutoTokenizer,
     LlamaTokenizer,
 )
-from gptwm_incontext import InContextWatermarkGenerator, tokenize_fn_with_chat_template, get_incontext_system_prompt
+from gptwm_incontext import InContextWatermarkGenerator, tokenize_fn_with_chat_template_ids, get_incontext_system_prompt
 from dataset import load_generation_dataset
 from transformers import AutoConfig
 
@@ -43,6 +43,7 @@ def main(args):
             "factor": 4.0,
             "original_max_position_embeddings": 32768
         }
+        config.max_position_embeddings = 131072
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
@@ -67,22 +68,24 @@ def main(args):
     system_prompt = get_incontext_system_prompt(green_token_string)
     
     # load dataset
-    ds = load_generation_dataset(args.prompt_file, args.num_test).to_iterable_dataset()
+    ds = load_generation_dataset(args.prompt_file, args.num_test)
 
     # Tokenize with chat template
     ds = ds.map(
-        tokenize_fn_with_chat_template(tokenizer, system_prompt),
-        batched=True,
-        remove_columns=ds.column_names
+        tokenize_fn_with_chat_template_ids(tokenizer, system_prompt),
+        batched=True
     )
 
     ds = ds.with_format("torch")
 
     outputs = []
-    for batch in tqdm(ds.iter(batch_size=32), desc="Generating"):
+    for batch in tqdm(ds.iter(batch_size=1), desc="Generating"):
+        input_prompts = batch["input_prompts"]
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
         generation_config = {
-            "input_ids": batch["input_ids"].to(model.device),
-            "attention_mask": batch["attention_mask"].to(model.device),
+            "input_ids": input_ids.to(model.device),
+            "attention_mask": attention_mask.to(model.device),
             "max_new_tokens": args.max_new_tokens,
             "return_dict_in_generate": True,
         }
@@ -104,26 +107,23 @@ def main(args):
 
         gen_text = tokenizer.batch_decode(
             generation.sequences,
-            skip_special_tokens=True,
+            skip_special_tokens=False,
         )
 
         # Extract prefix and completion
         for i in range(len(gen_text)):
-            prefix = tokenizer.decode(batch["input_ids"][i], skip_special_tokens=True)
-            gold_completion = tokenizer.decode(batch["gold_completion_ids"][i], skip_special_tokens=True)
-            gen_completion = gen_text[i][len(prefix):]
+            import pdb; pdb.set_trace()
+            input_prompt = input_prompts[i]
+            prefix = batch["prefix"][i]
+            gold_completion = batch["gold_completion"][i]
+            gen_completion = gen_text[i][len(input_prompt):]
             outputs.append(json.dumps({
+                "input_prompt": input_prompt,
                 "prefix": prefix,
                 "gold_completion": gold_completion,
                 "gen_completion": gen_completion,
             }, ensure_ascii=False))
             
-            outputs.append(json.dumps({
-                "prefix": prefix,
-                "gold_completion": gold_completion,
-                "gen_completion": gen_completion,
-            }, ensure_ascii=False))
-
         # Write in batches
         with open(output_file, "a") as f:
             f.write("\n".join(outputs) + "\n")

@@ -20,6 +20,14 @@ def extract_strength_from_filename(filename: str) -> float:
     return None
 
 
+def extract_fraction_from_filename(filename: str) -> Optional[float]:
+    """Extract fraction value from filename."""
+    match = re.search(r'frac_([0-9.]+)', filename)
+    if match:
+        return float(match.group(1))
+    return None
+
+
 def has_only_english_flag(filename: str) -> bool:
     """Return True if filename includes only_English marker."""
     return "only_English" in filename
@@ -45,6 +53,21 @@ def load_z_file_data(filepath: Path) -> Tuple[List[float], Optional[float]]:
         return z_scores, avg_ppl
 
 
+def load_z_file_data_with_labels(filepath: Path) -> Tuple[List[float], Optional[float], Optional[int], Optional[int]]:
+    """Load z_scores, avg_ppl, positive_num, and negative_num from a _z.jsonl file.
+    
+    Returns:
+        Tuple of (z_scores list, avg_ppl value or None, positive_num or None, negative_num or None)
+    """
+    with open(filepath, 'r') as f:
+        data = json.load(f)
+        z_scores = data.get('z_score', [])
+        avg_ppl = data.get('avg_ppl', None)
+        positive_num = data.get('positive_num', None)
+        negative_num = data.get('negative_num', None)
+        return z_scores, avg_ppl, positive_num, negative_num
+
+
 def calculate_fpr(z_scores: List[float], tau: float) -> float:
     """Calculate False Positive Rate: fraction of z_scores >= tau."""
     if len(z_scores) == 0:
@@ -59,6 +82,41 @@ def calculate_tpr(z_scores: List[float], tau: float) -> float:
         return 0.0
     count = sum(1 for z in z_scores if z >= tau)
     return count / len(z_scores)
+
+
+def calculate_metrics_from_labels(z_scores: List[float], labels: List[int], tau: float) -> Tuple[float, float, float, float]:
+    """Calculate FPR, TPR, TNR, FNR from z_scores and true labels.
+    
+    Args:
+        z_scores: List of z-scores (predictions)
+        labels: List of true labels (1 for positive/watermark, 0 for negative/no watermark)
+        tau: Threshold for prediction
+    
+    Returns:
+        Tuple of (FPR, TPR, TNR, FNR)
+    """
+    if len(z_scores) != len(labels):
+        raise ValueError(f"z_scores length ({len(z_scores)}) != labels length ({len(labels)})")
+    
+    if len(z_scores) == 0:
+        return 0.0, 0.0, 0.0, 0.0
+    
+    # Predictions: 1 if z_score >= tau, 0 otherwise
+    predictions = [1 if z >= tau else 0 for z in z_scores]
+    
+    # Calculate confusion matrix
+    tp = sum(1 for p, l in zip(predictions, labels) if p == 1 and l == 1)  # True Positive
+    fp = sum(1 for p, l in zip(predictions, labels) if p == 1 and l == 0)  # False Positive
+    tn = sum(1 for p, l in zip(predictions, labels) if p == 0 and l == 0)  # True Negative
+    fn = sum(1 for p, l in zip(predictions, labels) if p == 0 and l == 1)  # False Negative
+    
+    # Calculate metrics
+    fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0  # False Positive Rate
+    tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0  # True Positive Rate (Recall)
+    tnr = tn / (tn + fp) if (tn + fp) > 0 else 0.0  # True Negative Rate
+    fnr = fn / (fn + tp) if (fn + tp) > 0 else 0.0  # False Negative Rate
+    
+    return fpr, tpr, tnr, fnr
 
 
 def find_threshold(z_scores: List[float], target_fpr: float = 0.01) -> float:
@@ -76,6 +134,147 @@ def find_threshold(z_scores: List[float], target_fpr: float = 0.01) -> float:
     print(f"No threshold found!")
     exit(1)
     # return tau_list[-1]
+
+
+def process_directory_fraction(directory: str, output_csv: str = None, tau_thres: float = None):
+    """
+    Process all _z.jsonl files in the directory and calculate metrics using fraction mode.
+    In fraction mode, we use positive_num and negative_num from JSON files to construct true labels.
+    
+    Args:
+        directory: Path to directory containing _z.jsonl files
+        output_csv: Path to output CSV file (default: same directory as input)
+        tau_thres: If provided, use this threshold directly; otherwise find via find_threshold()
+    """
+    directory = Path(directory)
+    
+    # Extract model name from directory name
+    model_name = directory.name
+    
+    # Find all _z.jsonl files
+    z_files = list(directory.glob('*_z.jsonl'))
+    
+    if not z_files:
+        print(f"No _z.jsonl files found in {directory}")
+        return
+    
+    # Separate files by (fraction, only_English) tuple
+    fraction_files = {}
+    for filepath in z_files:
+        fraction = extract_fraction_from_filename(filepath.name)
+        if fraction is not None:
+            only_english = has_only_english_flag(filepath.name)
+            key = (fraction, only_english)
+            fraction_files[key] = filepath
+    
+    # Group files by only_English flag
+    only_english_groups = {}
+    for (fraction, only_english), filepath in fraction_files.items():
+        if only_english not in only_english_groups:
+            only_english_groups[only_english] = {}
+        only_english_groups[only_english][fraction] = filepath
+    
+    # Prepare results
+    results = []
+    
+    # Process each only_English group separately
+    for only_english in sorted(only_english_groups.keys()):
+        group_files = only_english_groups[only_english]
+        
+        print(f"\nProcessing only_English={only_english} group...")
+        
+        # Find or use threshold tau for this group
+        if tau_thres is not None:
+            tau = tau_thres
+            print(f"Using provided threshold tau = {tau}")
+        else:
+            # Need fraction=0.0 file for threshold finding
+            if 0.0 not in group_files:
+                print(f"No fraction=0.0 file found for only_English={only_english} in {directory}, and no tau_thres provided. Skipping...")
+                continue
+            
+            print(f"Loading z_scores from fraction=0.0 file (only_English={only_english})...")
+            z_scores_0, avg_ppl_0 = load_z_file_data(group_files[0.0])
+            print(f"Loaded {len(z_scores_0)} z_scores from fraction=0.0 file")
+            if avg_ppl_0 is not None:
+                print(f"  avg_ppl: {avg_ppl_0:.4f}")
+            
+            print("Finding threshold tau...")
+            tau = find_threshold(z_scores_0, target_fpr=0.01)
+            print(f"Found threshold tau = {tau}")
+        
+        # Process files with fraction != 0.0
+        other_fractions = sorted([f for f in group_files.keys() if f != 0.0])
+        
+        for fraction in other_fractions:
+            print(f"Processing fraction={fraction} (only_English={only_english})...")
+            z_scores, avg_ppl, positive_num, negative_num = load_z_file_data_with_labels(group_files[fraction])
+            print(f"Loaded {len(z_scores)} z_scores from fraction={fraction} file")
+            if avg_ppl is not None:
+                print(f"  avg_ppl: {avg_ppl:.4f}")
+            
+            # Check if positive_num and negative_num are available
+            if positive_num is None or negative_num is None:
+                print(f"Warning: positive_num or negative_num not found in file {group_files[fraction]}, skipping...")
+                continue
+            
+            print(f"  positive_num: {positive_num}, negative_num: {negative_num}")
+            
+            # Construct true labels: first positive_num are 1, next negative_num are 0
+            if len(z_scores) != positive_num + negative_num:
+                print(f"Warning: z_scores length ({len(z_scores)}) != positive_num + negative_num ({positive_num + negative_num}), skipping...")
+                continue
+            
+            labels = [1] * positive_num + [0] * negative_num
+            
+            # Calculate metrics using true labels
+            fpr, tpr, tnr, fnr = calculate_metrics_from_labels(z_scores, labels, tau)
+            
+            results.append({
+                'model_name': model_name,
+                'fraction': fraction,
+                'only_English': only_english,
+                'length': len(z_scores),
+                'tau': tau,
+                'FPR': fpr,
+                'TNR': tnr,
+                'TPR': tpr,
+                'FNR': fnr,
+                'avg_ppl': avg_ppl if avg_ppl is not None else ''
+            })
+    
+    # Write to CSV
+    if output_csv is None:
+        output_csv = directory / f"{model_name}_evaluation.csv"
+    else:
+        output_csv = Path(output_csv)
+    
+    print(f"\nWriting results to {output_csv}...")
+    with open(output_csv, 'w', newline='') as f:
+        fieldnames = ['model_name', 'fraction', 'only_English', 'length', 'tau', 'FPR', 'TNR', 'TPR', 'FNR', 'avg_ppl']
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
+    
+    print(f"Results written to {output_csv}")
+    print("="*100)
+    print(f"\nSummary:")
+    # Group results by only_English for summary
+    by_only_english = {}
+    for result in results:
+        oe = result['only_English']
+        if oe not in by_only_english:
+            by_only_english[oe] = []
+        by_only_english[oe].append(result)
+    
+    for only_english in sorted(by_only_english.keys()):
+        group_results = by_only_english[only_english]
+        print(f"\n  only_English={only_english}:")
+        if group_results:
+            print(f"    Threshold tau: {group_results[0]['tau']}")
+            for result in group_results:
+                print(f"    Fraction {result['fraction']}: FPR={result['FPR']:.4f}, TPR={result['TPR']:.4f}, TNR={result['TNR']:.4f}, FNR={result['FNR']:.4f}")
+    print("="*100)
 
 
 def process_directory(directory: str, output_csv: str = None, tau_thres: float = None):
@@ -249,6 +448,16 @@ if __name__ == '__main__':
         metavar='TAU',
         help='Use this threshold directly instead of finding via find_threshold(); all only_English groups use the same tau'
     )
+    parser.add_argument(
+        '--fraction_or_strength',
+        type=str,
+        choices=['fraction', 'strength'],
+        default='strength',
+        help='Evaluation mode: "strength" uses original logic, "fraction" uses positive_num/negative_num from JSON files'
+    )
     args = parser.parse_args()
 
-    process_directory(args.directory, args.output_csv, args.tau_thres)
+    if args.fraction_or_strength == 'fraction':
+        process_directory_fraction(args.directory, args.output_csv, args.tau_thres)
+    else:
+        process_directory(args.directory, args.output_csv, args.tau_thres)
