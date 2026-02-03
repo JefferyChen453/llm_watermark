@@ -121,10 +121,10 @@ def calculate_metrics_from_labels(z_scores: List[float], labels: List[int], tau:
 
 def find_threshold(z_scores: List[float], target_fpr: float = 0.01) -> float:
     """
-    Find threshold tau from tau_list (0.0 to 7.0, step=0.5) 
+    Find threshold tau from tau_list (0.0 to 15.0, step=0.5) 
     such that FPR < target_fpr.
     """
-    tau_list = [0.0 + i * 0.5 for i in range(int((7.0 - 0.0) / 0.5) + 1)]
+    tau_list = [0.0 + i * 0.5 for i in range(int((15.0 - 0.0) / 0.5) + 1)]
     for tau in tau_list:
         fpr = calculate_fpr(z_scores, tau)
         if fpr < target_fpr:
@@ -200,7 +200,7 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
                 print(f"  avg_ppl: {avg_ppl_0:.4f}")
             
             print("Finding threshold tau...")
-            tau = find_threshold(z_scores_0, target_fpr=0.01)
+            tau = find_threshold(z_scores_0, target_fpr=0.1)
             print(f"Found threshold tau = {tau}")
         
         # Process files with fraction != 0.0

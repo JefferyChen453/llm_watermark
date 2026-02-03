@@ -1,4 +1,5 @@
-Fractions=(0.0 0.1 0.25 0.5)
+Fractions=(0.25)
+# Fractions=(0.0 0.1 0.25 0.5)
 
 # ----- Qwen-3-4B -----
 for f in "${Fractions[@]}"; do
@@ -8,10 +9,11 @@ for f in "${Fractions[@]}"; do
         --yarn \
         --max_model_len 262144 \
         --fraction "$f" \
-        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_new/max_new_500/Qwen-Qwen3-4B-Instruct-2507
+        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_new/max_new_500/Qwen-Qwen3-4B-Instruct-2507 \
+        --only_English
 done
 
-Fractions=(0.0 0.5 0.1 0.15 0.2 0.25)
+# Fractions=(0.0 0.5 0.1 0.15 0.2 0.25)
 
 # # ----- Qwen-3-14B -----
 # for f in "${Fractions[@]}"; do

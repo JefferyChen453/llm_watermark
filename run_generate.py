@@ -68,7 +68,7 @@ def main(args):
 
     outputs = []
 
-    for batch in tqdm(ds.iter(batch_size=1), desc="Generating"):
+    for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
         generation_config = {
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),
@@ -125,6 +125,7 @@ if __name__ == "__main__":
     parser.add_argument_group("Generation")
     parser.add_argument("--model_name", type=str)
     parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
     parser.add_argument("--top_p", type=float, default=0.9)

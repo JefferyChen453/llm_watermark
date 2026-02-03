@@ -1,5 +1,5 @@
 import hashlib
-from typing import List, Optional
+from typing import Any, List, Optional
 import numpy as np
 from scipy.stats import norm
 import torch
@@ -22,7 +22,6 @@ class GPTWatermarkBase:
     @staticmethod
     def is_english_token(token: str) -> bool:
         """Check if a token is English (ASCII characters only, excluding first character)."""
-        import pdb; pdb.set_trace()
         return all(ord(c) < 128 for c in token)
 
     def __init__(
@@ -37,31 +36,26 @@ class GPTWatermarkBase:
     ):
         rng = np.random.default_rng(self._hash_fn(watermark_key))
         
+        self.tokenizer = tokenizer
+
         if only_English:
-            if tokenizer is None:
-                raise ValueError("tokenizer must be provided when only_English=True")
-            
-            # Get English token IDs
-            self.tokenizer = tokenizer
             vocab = self.tokenizer.get_vocab()
-            self.english_token_ids = [
+            english_token_ids = [
                 tid for tok, tid in vocab.items() 
                 if self.is_english_token(self.tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
             ]
-            
-            if len(self.english_token_ids) == 0:
-                raise ValueError("No English tokens found in vocabulary")
+            english_token_ids = sorted(english_token_ids)
             
             # Initialize mask with all False
             mask = np.zeros(model_emb_length, dtype=bool)
             
             # Only assign green-list to English tokens
-            num_green_english = int(fraction * len(self.english_token_ids))
-            english_mask = np.array([True] * num_green_english + [False] * (len(self.english_token_ids) - num_green_english))
+            num_green_english = int(fraction * len(english_token_ids))
+            english_mask = np.array([True] * num_green_english + [False] * (len(english_token_ids) - num_green_english))
             rng.shuffle(english_mask)
             
             # Set green-list for English tokens
-            for i, token_id in enumerate(self.english_token_ids):
+            for i, token_id in enumerate[Any](self.english_token_ids):
                 mask[token_id] = english_mask[i]
         else:
             green_list_size = int(fraction * vocab_size)
