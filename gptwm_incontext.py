@@ -24,17 +24,20 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
         # Ensure tokenizer is set (in case parent class also sets it)
         if not hasattr(self, 'tokenizer') or self.tokenizer is None:
             self.tokenizer = kwargs['tokenizer']
-    
+
     def get_green_token_string(self) -> str:
+        sep = "|"
         green_token_ids = torch.nonzero(self.green_list_mask, as_tuple=True)[0].tolist()
         green_tokens = self.tokenizer.convert_ids_to_tokens(green_token_ids)
         green_token_list = []
         for token in green_tokens:
             s = self.tokenizer.convert_tokens_to_string([token])
-            if s is not None and s.strip() != "":
-                green_token_list.append(s.strip())
-        
-        return " | ".join(green_token_list)
+            if s is None:
+                continue
+            if s != "":
+                green_token_list.append(s)
+        green_token_string = sep.join(green_token_list)
+        return green_token_string
 
 def tokenize_fn_with_chat_template(tokenizer, system_prompt: str):
     """Create a tokenize function that applies chat template with system prompt."""

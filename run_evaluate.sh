@@ -20,4 +20,6 @@
 
 # uv run evaluate.py /home/tianyichen/llm_watermark/outputs/meta-llama-Llama-2-13b-chat-hf /home/tianyichen/llm_watermark/outputs/meta-llama-Llama-2-13b-chat-hf/meta-llama-Llama-2-13b-chat-hf_evaluation.csv --fraction_or_strength strength --tau_thres 1.5
 
-uv run evaluate.py /home/tianyichen/llm_watermark/temp/logits_wm/fraction/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/logits_wm/fraction/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --tau_thres 5.0
+# uv run evaluate.py /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/strength/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/strength/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength strength
+
+uv run evaluate.py /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/fraction/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/fraction/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --tau_thres 5.0
