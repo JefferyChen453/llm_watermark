@@ -74,8 +74,8 @@
 # done
 
 # ----- test incontext -----
-# FRACTIONS=(0.4)
-FRACTIONS=(0.1 0.2 0.4 0.5)
+FRACTIONS=(0.3)
+# FRACTIONS=(0.1 0.2 0.4 0.5)
 for f in "${FRACTIONS[@]}"; do
     uv run run_generate_incontext_vllm.py \
         --model_name Qwen/Qwen3-14B \
@@ -83,7 +83,7 @@ for f in "${FRACTIONS[@]}"; do
         --yarn \
         --max_model_len 131072 \
         --fraction "$f" \
-        --output_dir /home/tianyichen/llm_watermark/outputs/only_eng/incontext_vllm/Qwen-Qwen3-14B_withlinewithx1f \
+        --output_dir /home/tianyichen/llm_watermark/outputs/only_eng/incontext_vllm/Qwen-Qwen3-14B_withlinewithoutspace \
         --only_English \
         --num_test 512
 done

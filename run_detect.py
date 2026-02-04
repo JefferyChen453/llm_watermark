@@ -1,7 +1,6 @@
 import argparse
 import json
 from tqdm import tqdm
-import torch
 from transformers import AutoTokenizer, LlamaTokenizer, AutoConfig
 from gptwm import GPTWatermarkDetector
 

@@ -4,6 +4,7 @@ Using vLLM for efficient inference. Mirrors run_generate.py data flow and output
 """
 import argparse
 import json
+import logging
 import os
 from tqdm import tqdm
 
@@ -11,36 +12,30 @@ from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
 from dataset import load_generation_dataset
-from gptwm import GPTWatermarkLogitsWarper
+from gptwm import GPTWatermarkBase
+from gptwm_vllm_config import vLLMGPTWatermarkLogitsWarper, set_watermark_base
 
 
-def make_vllm_logits_processor(warper: GPTWatermarkLogitsWarper):
-    watermark = warper.strength * warper.green_list_mask
+os.environ["VLLM_LOG_LEVEL"] = "ERROR"
 
-    def _fn(_output_ids: list, logits):
-        return logits + watermark.to(logits.device)
-
-    return _fn
+logging.getLogger("vllm").setLevel(logging.ERROR)
 
 
-def create_sampling_params(args, logits_processors=None):
+def create_sampling_params(args):
     """Create SamplingParams based on arguments."""
     base = dict(max_tokens=args.max_new_tokens)
-    if logits_processors:
-        base["logits_processors"] = logits_processors
     if args.beam_size is not None:
         return SamplingParams(
             n=args.beam_size,
             use_beam_search=True,
-            **base,
+            **base
         )
     return SamplingParams(
         temperature=1.0,
         top_k=args.top_k if args.top_k is not None else -1,
         top_p=args.top_p,
-        **base,
+        **base
     )
-
 
 def main(args):
     output_file = (
@@ -63,7 +58,7 @@ def main(args):
             tokenizer.pad_token = tokenizer.eos_token
 
     model_config = AutoConfig.from_pretrained(args.model_name)
-    warper = GPTWatermarkLogitsWarper(
+    wm_base = GPTWatermarkBase(
         fraction=args.fraction,
         strength=args.strength,
         vocab_size=tokenizer.vocab_size,
@@ -72,14 +67,14 @@ def main(args):
         only_English=args.only_English,
         tokenizer=tokenizer,
     )
-    logits_processors = [make_vllm_logits_processor(warper)]
-
+    sampling_params = create_sampling_params(args)
+    
     # vLLM model (structure aligned with run_generate_incontext_vllm)
     llm_kwargs = {
         "model": args.model_name,
         "trust_remote_code": True,
         "dtype": "bfloat16",
-        "tensor_parallel_size": args.tensor_parallel_size,
+        "tensor_parallel_size": 8,
         "pipeline_parallel_size": 1,
         "gpu_memory_utilization": 0.90,
     }
@@ -88,25 +83,32 @@ def main(args):
     if args.max_model_len is not None:
         llm_kwargs["max_model_len"] = args.max_model_len
     else:
-        llm_kwargs["max_model_len"] = 262144
+        llm_kwargs["max_model_len"] = 131072
 
     if args.yarn:
+        # Configure YaRN for long context
         print("Using YaRN for long context")
-        target_max = llm_kwargs["max_model_len"]
-        llm_kwargs["hf_overrides"]["max_position_embeddings"] = target_max
+
+        # Override max_position_embeddings in model config to match max_model_len
+        target_max_position_embeddings = llm_kwargs["max_model_len"]
+        print(f"Overriding max_position_embeddings to {target_max_position_embeddings}")
+        llm_kwargs["hf_overrides"]["max_position_embeddings"] = target_max_position_embeddings
         llm_kwargs["hf_overrides"]["rope_scaling"] = {
             "rope_type": "yarn",
             "factor": args.yarn_factor,
-            "original_max_position_embeddings": 32768,
+            "original_max_position_embeddings": 32768
         }
 
     print("Loading vLLM model...")
-    llm = LLM(**llm_kwargs)
+    set_watermark_base(wm_base)
+    llm = LLM(
+        **llm_kwargs,
+        logits_processors=[vLLMGPTWatermarkLogitsWarper]
+    )
     print("vLLM model loaded successfully")
     print("=" * 100)
 
     ds = load_generation_dataset(args.prompt_file, args.num_test)
-    sampling_params = create_sampling_params(args, logits_processors)
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
         prefixes = batch["prefix"]
@@ -145,7 +147,6 @@ if __name__ == "__main__":
     gen.add_argument("--yarn", action="store_true", help="Enable YaRN for long context")
     gen.add_argument("--yarn_factor", type=float, default=4.0)
     gen.add_argument("--max_model_len", type=int, default=None)
-    gen.add_argument("--tensor_parallel_size", type=int, default=8)
     gen.add_argument("--batch_size", type=int, default=32)
 
     wm = parser.add_argument_group("Watermark")

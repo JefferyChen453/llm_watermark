@@ -4,17 +4,19 @@ Using vLLM for efficient inference.
 """
 import argparse
 import json
-from tqdm import tqdm
-from transformers import (
-    AutoTokenizer,
-    LlamaTokenizer,
-)
-from vllm import LLM, SamplingParams
-from transformers import AutoConfig
-from gptwm_incontext import InContextWatermarkGenerator, tokenize_fn_with_chat_template, get_incontext_system_prompt
-from dataset import load_generation_dataset
-import os
 import logging
+import os
+
+from tqdm import tqdm
+from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
+from vllm import LLM, SamplingParams
+
+from dataset import load_generation_dataset
+from gptwm_incontext import (
+    InContextWatermarkGenerator,
+    get_incontext_system_prompt,
+    tokenize_fn_with_chat_template,
+)
 
 os.environ["VLLM_LOG_LEVEL"] = "ERROR"
 
@@ -113,6 +115,7 @@ def main(args):
     llm = LLM(**llm_kwargs)
     print("vLLM model loaded successfully")
     print("="*100)
+    sampling_params = create_sampling_params(args)
     
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test).to_iterable_dataset()
@@ -128,7 +131,6 @@ def main(args):
         input_prompts = batch["input_prompts"]
         prefixes = batch["prefix"]
         gold_completions = batch["gold_completion"]
-        sampling_params = create_sampling_params(args)
         
         # Generate with vLLM
         outputs_vllm = llm.generate(input_prompts, sampling_params)
