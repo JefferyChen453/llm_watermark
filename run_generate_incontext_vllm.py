@@ -12,11 +12,14 @@ from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
 from dataset import load_generation_dataset
+from gptwm import GPTWatermarkBase
 from gptwm_incontext import (
     InContextWatermarkGenerator,
     get_incontext_system_prompt,
     tokenize_fn_with_chat_template,
 )
+from gptwm_vllm_config import set_watermark_base, vLLMGPTWatermarkLogitsWarper
+
 
 os.environ["VLLM_LOG_LEVEL"] = "ERROR"
 
@@ -44,6 +47,7 @@ def main(args):
     output_file = (
         f"{args.output_dir}/"
         f"{args.model_name.replace('/', '-')}_"
+        f"strength_{args.strength}_"
         f"frac_{args.fraction}_"
         f"len_{args.max_new_tokens}_"
         f"num_{args.num_test}_incontext_vllm.jsonl"
@@ -112,7 +116,23 @@ def main(args):
         }
     
     print("Loading vLLM model...")
-    llm = LLM(**llm_kwargs)
+    if args.add_logits_wm:
+        wm_base = GPTWatermarkBase(
+            fraction=args.fraction,
+            strength=args.strength,
+            vocab_size=tokenizer.vocab_size,
+            model_emb_length=model_config.vocab_size,
+            watermark_key=args.wm_key,
+            only_English=args.only_English,
+            tokenizer=tokenizer
+        )
+        set_watermark_base(wm_base)
+        llm = LLM(
+            **llm_kwargs,
+            logits_processors=[vLLMGPTWatermarkLogitsWarper]
+        )
+    else:
+        llm = LLM(**llm_kwargs)
     print("vLLM model loaded successfully")
     print("="*100)
     sampling_params = create_sampling_params(args)
@@ -172,7 +192,9 @@ if __name__ == "__main__":
     
     # Watermark parameters
     parser.add_argument_group("Watermark")
+    parser.add_argument("--add_logits_wm", action="store_true", help="Add logits-based watermarking")
     parser.add_argument("--fraction", type=float, default=0.5)
+    parser.add_argument("--strength", type=float, default=2.0)
     parser.add_argument("--wm_key", type=int, default=0)
     parser.add_argument("--only_English", action="store_true")
 
