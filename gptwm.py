@@ -55,7 +55,7 @@ class GPTWatermarkBase:
             rng.shuffle(english_mask)
             
             # Set green-list for English tokens
-            for i, token_id in enumerate[Any](english_token_ids):
+            for i, token_id in enumerate(english_token_ids):
                 mask[token_id] = english_mask[i]
         else:
             green_list_size = int(fraction * vocab_size)

@@ -25,4 +25,19 @@
 # uv run evaluate.py /home/tianyichen/llm_watermark/outputs/only_eng/incontext_vllm/Qwen-Qwen3-14B_withlinewithoutspace /home/tianyichen/llm_watermark/outputs/only_eng/incontext_vllm/Qwen-Qwen3-14B_withlinewithoutspace/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --tau_thres 2.0
 
 
-uv run evaluate.py /home/tianyichen/llm_watermark/temp/test_vllm_gen /home/tianyichen/llm_watermark/temp/test_vllm_gen/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength strength
+# uv run evaluate.py /home/tianyichen/llm_watermark/temp/test_vllm_gen /home/tianyichen/llm_watermark/temp/test_vllm_gen/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength strength
+
+# uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --tau_thres 1.0
+
+# uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_no_logits_wm/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/incontext_no_logits_wm/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --tau_thres 1.0
+
+uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength5/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength5/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --target_fpr 0.01
+
+uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --target_fpr 0.01
+
+uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-14B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-14B/Qwen-Qwen3-14B_evaluation.csv --fraction_or_strength fraction --target_fpr 0.01
+
+
+uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-32B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-32B/Qwen-Qwen3-32B_evaluation.csv --fraction_or_strength fraction --target_fpr 0.01
+
+uv run evaluate.py /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-32B /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-32B/Qwen-Qwen3-32B_evaluation.csv --fraction_or_strength fraction --target_fpr 0.01
