@@ -1,113 +1,79 @@
 #!/bin/bash
 # Knowledge Distillation training for in-context watermark.
 #
-# Prerequisites:
-# 1. Generate teacher trajectories with run_generate_incontext_vllm.py --add_logits_wm
-# 2. Use the output jsonl as --train_data
+# This script launches run_train_kd_incontext.py with DeepSpeed ZeRO-2.
+# The training generates watermarked responses on-the-fly (no pre-generated
+# trajectories needed) and distils the watermark bias into the model.
 #
-# For long prompts (~80k tokens with fraction=0.4):
-#   - Use DeepSpeed ZeRO-3 with CPU offload
-#   - Use gradient accumulation
-#   - Use micro_batch_size=1
-#   - Enable gradient checkpointing
+# Memory budget for ~80k-token prompts (fraction=0.4):
+#   - DeepSpeed ZeRO-2 with optimizer CPU offload
+#   - Gradient checkpointing  (saves ~30 GB of activation memory)
+#   - Flash Attention 2        (O(n) instead of O(n^2) attention memory)
+#   - micro_batch_size = 1     (one sample per GPU per step)
+#   - Gradient accumulation    (effective batch = NPROC * GRAD_ACCUM)
 #
-# Example (single node, 8 GPUs with DeepSpeed):
-#   deepspeed --num_gpus=8 run_train_kd_incontext.py \
-#     --deepspeed --deepspeed_config configs/ds_zero3_config.json \
-#     --train_data path/to/teacher_trajectories.jsonl \
-#     --model_name Qwen/Qwen3-14B ...
+# Example:
+#   bash scripts/run_train_kd_incontext.sh
 #
-# Example (torchrun without DeepSpeed):
-#   torchrun --nproc_per_node=8 run_train_kd_incontext.py \
-#     --train_data path/to/teacher_trajectories.jsonl ...
+# Override any variable on the command line:
+#   NPROC=4 STRENGTH=2.0 bash scripts/run_train_kd_incontext.sh
+#
+# Pass extra flags to the Python script via positional args:
+#   bash scripts/run_train_kd_incontext.sh --num_samples 64 --wandb
 
 set -e
 
-# Path to teacher trajectory data (from run_generate_incontext_vllm.py --add_logits_wm)
-TEACHER_DATA="${TEACHER_DATA:-./temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-14B/Qwen-Qwen3-14B_strength_3.0_frac_0.4_len_500_num_512_incontext_vllm.jsonl}"
-
-# Output directory
+# ── Paths ────────────────────────────────────────────────────────────────────
+TRAIN_DATA="${TRAIN_DATA:-./UnigramWatermark/data/LFQA/inputs.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-./outputs/kd_incontext}"
+DS_CONFIG="${DS_CONFIG:-configs/ds_zero2_config.json}"
 
-# Model
-MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-14B}"
+# ── Model ────────────────────────────────────────────────────────────────────
+MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
 
-# For ~80k token prompts: raise max_prompt_length, use small batch, gradient accumulation
-MAX_PROMPT_LEN="${MAX_PROMPT_LEN:-8192}"   # Raise to 81920 for fraction=0.4 green list
-MAX_LENGTH="${MAX_LENGTH:-8704}"            # max_prompt + max_completion
-BATCH_SIZE="${BATCH_SIZE:-1}"
-GRAD_ACCUM="${GRAD_ACCUM:-4}"
+# ── Watermark (must match detection settings later) ──────────────────────────
+FRACTION="${FRACTION:-0.3}"
+STRENGTH="${STRENGTH:-2.0}"
+WM_KEY="${WM_KEY:-0}"
 
-# Watermark params (must match teacher generation)
-FRACTION="${FRACTION:-0.4}"
-STRENGTH="${STRENGTH:-3.0}"
-ONLY_ENGLISH="--only_English"
-
-# Training
+# ── Training ─────────────────────────────────────────────────────────────────
+NPROC="${NPROC:-8}"
 LR="${LR:-1e-5}"
 EPOCHS="${EPOCHS:-3}"
+GRAD_ACCUM="${GRAD_ACCUM:-4}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-500}"
+WARMUP="${WARMUP:-100}"
+KD_TEMP="${KD_TEMP:-1.0}"
+
+# ── Logging / saving ────────────────────────────────────────────────────────
+LOG_STEPS="${LOG_STEPS:-10}"
 SAVE_STEPS="${SAVE_STEPS:-500}"
 
-# W&B
-WANDB="${WANDB:-false}"
-WANDB_PROJECT="${WANDB_PROJECT:-kd-incontext-watermark}"
-WANDB_RUN_NAME="${WANDB_RUN_NAME:-}"
-
-# Memory optimizations
-USE_DEEPSPEED="${USE_DEEPSPEED:-true}"
-DS_CONFIG="${DS_CONFIG:-configs/ds_zero3_config.json}"
-YARN="--yarn"
+# ── YaRN (for long-context models) ──────────────────────────────────────────
 MAX_POS="${MAX_POS:-131072}"
+YARN_FACTOR="${YARN_FACTOR:-4.0}"
 
-# Number of GPUs
-NPROC="${NPROC:-8}"
-
-# Build optional W&B args
-WANDB_ARGS=()
-[ "$WANDB" = "true" ] && WANDB_ARGS=(--wandb --wandb_project "$WANDB_PROJECT")
-[ -n "$WANDB_RUN_NAME" ] && WANDB_ARGS+=(--wandb_run_name "$WANDB_RUN_NAME")
-
-if [ "$USE_DEEPSPEED" = "true" ]; then
-    deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
-        --deepspeed \
-        --deepspeed_config "$DS_CONFIG" \
-        --model_name "$MODEL_NAME" \
-        --train_data "$TEACHER_DATA" \
-        --output_dir "$OUTPUT_DIR" \
-        --max_prompt_length "$MAX_PROMPT_LEN" \
-        --max_length "$MAX_LENGTH" \
-        --batch_size "$BATCH_SIZE" \
-        --gradient_accumulation_steps "$GRAD_ACCUM" \
-        --fraction "$FRACTION" \
-        --strength "$STRENGTH" \
-        $ONLY_ENGLISH \
-        --lr "$LR" \
-        --num_epochs "$EPOCHS" \
-        --save_steps "$SAVE_STEPS" \
-        "${WANDB_ARGS[@]}" \
-        $YARN \
-        --max_position_embeddings "$MAX_POS" \
-        --gradient_checkpointing \
-        --flash_attn \
-        "$@"
-else
-    torchrun --standalone --nnodes=1 --nproc_per_node="$NPROC" run_train_kd_incontext.py \
-        --model_name "$MODEL_NAME" \
-        --train_data "$TEACHER_DATA" \
-        --output_dir "$OUTPUT_DIR" \
-        --max_prompt_length "$MAX_PROMPT_LEN" \
-        --max_length "$MAX_LENGTH" \
-        --batch_size "$BATCH_SIZE" \
-        --fraction "$FRACTION" \
-        --strength "$STRENGTH" \
-        $ONLY_ENGLISH \
-        --lr "$LR" \
-        --num_epochs "$EPOCHS" \
-        --save_steps "$SAVE_STEPS" \
-        "${WANDB_ARGS[@]}" \
-        $YARN \
-        --max_position_embeddings "$MAX_POS" \
-        --gradient_checkpointing \
-        --flash_attn \
-        "$@"
-fi
+# ── Launch ───────────────────────────────────────────────────────────────────
+deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
+    --deepspeed_config "$DS_CONFIG" \
+    --model_name "$MODEL_NAME" \
+    --train_data "$TRAIN_DATA" \
+    --output_dir "$OUTPUT_DIR" \
+    --fraction "$FRACTION" \
+    --strength "$STRENGTH" \
+    --wm_key "$WM_KEY" \
+    --only_English \
+    --lr "$LR" \
+    --kd_temperature "$KD_TEMP" \
+    --num_epochs "$EPOCHS" \
+    --gradient_accumulation_steps "$GRAD_ACCUM" \
+    --warmup_steps "$WARMUP" \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    --log_steps "$LOG_STEPS" \
+    --save_steps "$SAVE_STEPS" \
+    --gradient_checkpointing \
+    --flash_attn \
+    --yarn \
+    --yarn_factor "$YARN_FACTOR" \
+    --max_position_embeddings "$MAX_POS" \
+    "$@"
