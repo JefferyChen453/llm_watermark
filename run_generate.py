@@ -1,7 +1,10 @@
-import os
 import argparse
+from functools import partial
 import json
+import os
+
 import torch
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
@@ -9,9 +12,9 @@ from transformers import (
     LlamaTokenizer,
     LogitsProcessorList,
 )
-from gptwm import GPTWatermarkLogitsWarper
-from dataset import load_generation_dataset, tokenize_fn
 
+from dataset import collate_fn, load_generation_dataset, map_fn_ids
+from gptwm import GPTWatermarkLogitsWarper
 
 def main(args):
     output_file = (
@@ -56,19 +59,19 @@ def main(args):
 
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test)
-
-    # tokenize
     ds = ds.map(
-        tokenize_fn(tokenizer),
+        map_fn_ids(tokenizer),
         batched=True,
-        remove_columns=ds.column_names,
     )
-
-    ds = ds.with_format("torch")
+    data_loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        collate_fn=partial(collate_fn, tokenizer=tokenizer),
+    )
 
     outputs = []
 
-    for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
+    for batch in tqdm(data_loader, desc="Generating", total=len(data_loader)):
         generation_config = {
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),
@@ -100,8 +103,8 @@ def main(args):
         )
 
         for i in range(len(gen_text)):
-            prefix = tokenizer.decode(batch["input_ids"][i], skip_special_tokens=True)
-            gold_completion = tokenizer.decode(batch["gold_completion_ids"][i], skip_special_tokens=True)
+            prefix = batch["prefix"][i]
+            gold_completion = batch["gold_completion"][i]
             gen_completion = gen_text[i][len(prefix):]
             outputs.append(json.dumps({
                 "prefix": prefix,

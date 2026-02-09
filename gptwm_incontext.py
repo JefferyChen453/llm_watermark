@@ -3,7 +3,6 @@ In-context watermark implementation: Green word list as system prompt.
 """
 from gptwm import GPTWatermarkBase
 import torch
-import warnings
 
 
 class InContextWatermarkGenerator(GPTWatermarkBase):
@@ -13,15 +12,12 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
     """
     
     def __init__(self, *args, **kwargs):
-        # Ensure tokenizer is provided
         if 'tokenizer' not in kwargs or kwargs['tokenizer'] is None:
             raise ValueError("tokenizer must be provided for InContextWatermarkGenerator")
         
-        # Store tokenizer before calling super().__init__ since parent may need it
         self.tokenizer = kwargs['tokenizer']
         super().__init__(*args, **kwargs)
         
-        # Ensure tokenizer is set (in case parent class also sets it)
         if not hasattr(self, 'tokenizer') or self.tokenizer is None:
             self.tokenizer = kwargs['tokenizer']
 
@@ -38,74 +34,6 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
                 green_token_list.append(s)
         green_token_string = sep.join(green_token_list)
         return green_token_string
-
-def tokenize_fn_with_chat_template(tokenizer, system_prompt: str):
-    """Create a tokenize function that applies chat template with system prompt."""
-    def _fn(batch):
-        user_prompts = batch["prefix"]
-        input_prompts = []
-        for user_prompt in user_prompts:
-            if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-                prompt_text = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False
-                )
-                input_prompts.append(prompt_text)
-            else:
-                full_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-                input_prompts.append(full_prompt)
-
-        batch.update({
-            "input_prompts": input_prompts,
-        })
-        return batch
-
-    return _fn
-
-def tokenize_fn_with_chat_template_ids(tokenizer, system_prompt: str):
-    """Create a tokenize function that applies chat template with system prompt."""
-    def _fn(batch):
-        user_prompts = batch["prefix"]
-        input_prompts = []
-        for user_prompt in user_prompts:
-            if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-                prompt_text = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False
-                )
-                input_prompts.append(prompt_text)
-            else:
-                full_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-                input_prompts.append(full_prompt)
-        encoded_prompts = tokenizer(
-            input_prompts,
-            return_tensors="pt",
-            add_special_tokens=False,
-            padding=True,
-            truncation=True,
-        )
-        print(encoded_prompts["input_ids"].shape)
-
-        batch.update({
-            "input_prompts": input_prompts,
-            **encoded_prompts
-        })
-        return batch
-
-    return _fn
-
 
 
 def get_incontext_system_prompt(green_token_string: str) -> str:

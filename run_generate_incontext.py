@@ -2,17 +2,18 @@
 Generate text with in-context watermarking: green word list in system prompt.
 """
 import argparse
+from functools import partial
 import json
+import os
+
 import torch
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    LlamaTokenizer,
-)
-from gptwm_incontext import InContextWatermarkGenerator, tokenize_fn_with_chat_template_ids, get_incontext_system_prompt
-from dataset import load_generation_dataset
+from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer
 from transformers import AutoConfig
+
+from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
+from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
 
 
 def main(args):
@@ -69,23 +70,21 @@ def main(args):
     
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test)
-
-    # Tokenize with chat template
     ds = ds.map(
-        tokenize_fn_with_chat_template_ids(tokenizer, system_prompt),
-        batched=True
+        map_fn_with_chat_template_ids(tokenizer, system_prompt),
+        num_proc=os.cpu_count() // 2
+    )
+    data_loader = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        collate_fn=partial(collate_fn, tokenizer=tokenizer),
     )
 
-    ds = ds.with_format("torch")
-
     outputs = []
-    for batch in tqdm(ds.iter(batch_size=1), desc="Generating"):
-        input_prompts = batch["input_prompts"]
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
+    for batch in tqdm(data_loader, desc="Generating", total=len(data_loader)):
         generation_config = {
-            "input_ids": input_ids.to(model.device),
-            "attention_mask": attention_mask.to(model.device),
+            "input_ids": batch["input_ids"].to(model.device),
+            "attention_mask": batch["attention_mask"].to(model.device),
             "max_new_tokens": args.max_new_tokens,
             "return_dict_in_generate": True,
         }
@@ -110,10 +109,8 @@ def main(args):
             skip_special_tokens=False,
         )
 
-        # Extract prefix and completion
         for i in range(len(gen_text)):
-            import pdb; pdb.set_trace()
-            input_prompt = input_prompts[i]
+            input_prompt = batch["input_prompts"][i]
             prefix = batch["prefix"][i]
             gold_completion = batch["gold_completion"][i]
             gen_completion = gen_text[i][len(input_prompt):]
@@ -124,7 +121,6 @@ def main(args):
                 "gen_completion": gen_completion,
             }, ensure_ascii=False))
             
-        # Write in batches
         with open(output_file, "a") as f:
             f.write("\n".join(outputs) + "\n")
         outputs = []

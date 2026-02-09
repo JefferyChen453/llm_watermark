@@ -11,13 +11,9 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
-from dataset import load_generation_dataset
+from dataset import load_generation_dataset, map_fn_with_chat_template
 from gptwm import GPTWatermarkBase
-from gptwm_incontext import (
-    InContextWatermarkGenerator,
-    get_incontext_system_prompt,
-    tokenize_fn_with_chat_template,
-)
+from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
 from gptwm_vllm_config import set_watermark_base, vLLMGPTWatermarkLogitsWarper
 
 
@@ -84,7 +80,6 @@ def main(args):
     # Load vLLM model with YaRN support if enabled
     llm_kwargs = {
         "model": args.model_name,
-        "trust_remote_code": True,
         "dtype": "bfloat16",
 
         # parallel parameters
@@ -142,9 +137,8 @@ def main(args):
 
     # Tokenize with chat template
     ds = ds.map(
-        tokenize_fn_with_chat_template(tokenizer, system_prompt),
-        batched=True,
-        # remove_columns=ds.column_names
+        map_fn_with_chat_template(tokenizer, system_prompt),
+        batched=True
     )
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
