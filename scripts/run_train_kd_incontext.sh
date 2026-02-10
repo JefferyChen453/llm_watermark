@@ -24,7 +24,7 @@
 set -e
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-TRAIN_DATA="${TRAIN_DATA:-./UnigramWatermark/data/LFQA/inputs.jsonl}"
+TRAIN_DATA="${TRAIN_DATA:-./UnigramWatermark/data/LFQA/train.jsonl}"
 OUTPUT_DIR="${OUTPUT_DIR:-./outputs/kd_incontext}"
 DS_CONFIG="${DS_CONFIG:-configs/ds_zero2_config.json}"
 
@@ -32,17 +32,17 @@ DS_CONFIG="${DS_CONFIG:-configs/ds_zero2_config.json}"
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-8B}"
 
 # ── Watermark (must match detection settings later) ──────────────────────────
-FRACTION="${FRACTION:-0.3}"
+FRACTION="${FRACTION:-0.1}"
 STRENGTH="${STRENGTH:-2.0}"
 WM_KEY="${WM_KEY:-0}"
 
 # ── Training ─────────────────────────────────────────────────────────────────
 NPROC="${NPROC:-8}"
-LR="${LR:-1e-5}"
-EPOCHS="${EPOCHS:-3}"
-GRAD_ACCUM="${GRAD_ACCUM:-4}"
+LR="${LR:-5e-6}"
+MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-4}"
+EPOCHS="${EPOCHS:-1}"
+GRAD_ACCUM="${GRAD_ACCUM:-1}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-500}"
-WARMUP="${WARMUP:-100}"
 KD_TEMP="${KD_TEMP:-1.0}"
 
 # ── Logging / saving ────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ MAX_POS="${MAX_POS:-131072}"
 YARN_FACTOR="${YARN_FACTOR:-4.0}"
 
 # ── Launch ───────────────────────────────────────────────────────────────────
-deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
+CUDA_LAUNCH_BLOCKING=1 deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
     --deepspeed_config "$DS_CONFIG" \
     --model_name "$MODEL_NAME" \
     --train_data "$TRAIN_DATA" \
@@ -64,10 +64,11 @@ deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
     --wm_key "$WM_KEY" \
     --only_English \
     --lr "$LR" \
+    --micro_batch_size "$MICRO_BATCH_SIZE" \
+    --english_token_loss \
     --kd_temperature "$KD_TEMP" \
     --num_epochs "$EPOCHS" \
     --gradient_accumulation_steps "$GRAD_ACCUM" \
-    --warmup_steps "$WARMUP" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
     --log_steps "$LOG_STEPS" \
     --save_steps "$SAVE_STEPS" \
@@ -76,4 +77,7 @@ deepspeed --num_gpus="$NPROC" run_train_kd_incontext.py \
     --yarn \
     --yarn_factor "$YARN_FACTOR" \
     --max_position_embeddings "$MAX_POS" \
+    --wandb \
+    --wandb_project "kd-incontext-watermark" \
+    --wandb_run_name "Fraction${FRACTION}-Strength${STRENGTH}-Key${WM_KEY}" \
     "$@"

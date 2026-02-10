@@ -27,109 +27,33 @@ Usage:
 """
 
 import argparse
+from functools import partial
 import json
 import logging
 import math
 import os
-from typing import Optional
 
 import deepspeed
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler
+from tqdm import tqdm
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
     LogitsProcessorList,
 )
-from tqdm import tqdm
+import wandb
 
+from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
 from gptwm import GPTWatermarkLogitsWarper
-from gptwm_incontext import (
-    InContextWatermarkGenerator,
-    get_incontext_system_prompt,
-)
+from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
+
 
 logger = logging.getLogger(__name__)
-
-
-# --------------------------------------------------------------------------- #
-#  Dataset                                                                     #
-# --------------------------------------------------------------------------- #
-
-
-class KDIncontextDataset(Dataset):
-    """
-    Loads a JSONL file with ``prefix`` (and optionally ``gold_completion``)
-    fields, prepends the in-context watermark system prompt via the
-    tokenizer's chat template, and stores the tokenised prompt per sample.
-    """
-
-    def __init__(
-        self,
-        data_path: str,
-        tokenizer,
-        system_prompt: str,
-        num_samples: Optional[int] = None,
-        max_prompt_length: Optional[int] = None,
-    ):
-        rows = []
-        with open(data_path) as f:
-            for line in f:
-                rows.append(json.loads(line))
-        if num_samples is not None:
-            rows = rows[:num_samples]
-
-        self.samples = []
-        for row in rows:
-            user_prompt = row["prefix"]
-
-            # Build prompt with chat template
-            if (
-                hasattr(tokenizer, "apply_chat_template")
-                and tokenizer.chat_template is not None
-            ):
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ]
-                prompt_text = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    enable_thinking=False,
-                )
-            else:
-                prompt_text = (
-                    f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-                )
-
-            input_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
-            if max_prompt_length is not None and len(input_ids) > max_prompt_length:
-                input_ids = input_ids[:max_prompt_length]
-
-            self.samples.append(
-                {"input_ids": input_ids, "prefix": user_prompt}
-            )
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        return self.samples[idx]
-
-
-def _collate_fn(batch):
-    """Collate for micro-batch-size = 1 (necessary for very long prompts)."""
-    return {
-        "input_ids": torch.tensor(
-            batch[0]["input_ids"], dtype=torch.long
-        ).unsqueeze(0),
-        "prefix": batch[0]["prefix"],
-    }
-
+logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 # --------------------------------------------------------------------------- #
 #  Model helpers                                                               #
@@ -137,10 +61,6 @@ def _collate_fn(batch):
 
 
 def get_backbone_and_lm_head(model):
-    """
-    Return ``(transformer_backbone, lm_head)`` for common HuggingFace
-    CausalLM architectures (Llama, Qwen, Mistral, Phi, ...).
-    """
     if hasattr(model, "model") and hasattr(model, "lm_head"):
         return model.model, model.lm_head
     if hasattr(model, "transformer") and hasattr(model, "lm_head"):
@@ -160,10 +80,11 @@ def train(args):
     # -- Distributed setup ------------------------------------------------- #
     deepspeed.init_distributed()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+    device = torch.device("cuda", local_rank)
     global_rank = int(os.environ.get("RANK", 0))
     world_size = int(os.environ.get("WORLD_SIZE", 1))
     is_main = global_rank == 0
-    device = torch.device(f"cuda:{local_rank}")
 
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -171,20 +92,19 @@ def train(args):
     )
 
     if is_main and args.wandb:
-        import wandb
         wandb.init(
             entity="chentianyi453",
             project=args.wandb_project,
             name=args.wandb_run_name or None,
             config=vars(args),
+            dir="/home/tianyichen/llm_watermark/wandb"
         )
 
     # -- Tokenizer --------------------------------------------------------- #
     tokenizer = AutoTokenizer.from_pretrained(
         args.model_name, trust_remote_code=True
     )
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
 
     # -- Model config ------------------------------------------------------ #
     config = AutoConfig.from_pretrained(
@@ -201,7 +121,7 @@ def train(args):
     # -- Model ------------------------------------------------------------- #
     model_kwargs = {
         "config": config,
-        "torch_dtype": torch.bfloat16,
+        "dtype": torch.bfloat16,
         "trust_remote_code": True,
     }
     if args.flash_attn:
@@ -227,6 +147,7 @@ def train(args):
         tokenizer=tokenizer,
     )
     green_list_mask = watermark_processor.green_list_mask  # [vocab], 0/1 float
+    english_mask = watermark_processor.english_mask # [vocab], 0/1 float
 
     # -- In-context prompt ------------------------------------------------- #
     ic_gen = InContextWatermarkGenerator(
@@ -244,59 +165,50 @@ def train(args):
         logger.info(f"System prompt length: ~{n_tok} tokens")
 
     # -- Dataset & DataLoader ---------------------------------------------- #
-    dataset = KDIncontextDataset(
-        data_path=args.train_data,
-        tokenizer=tokenizer,
-        system_prompt=system_prompt,
-        num_samples=args.num_samples,
-        max_prompt_length=args.max_prompt_length,
+    ds = load_generation_dataset(args.train_data)
+    ds = ds.map(
+        map_fn_with_chat_template_ids(tokenizer, system_prompt),
+        num_proc=os.cpu_count() // 2
     )
     sampler = DistributedSampler(
-        dataset,
+        ds,
         num_replicas=world_size,
         rank=global_rank,
         shuffle=True,
         seed=42,
     )
-    dataloader = DataLoader(
-        dataset,
-        batch_size=1,  # must be 1 for very long prompts
+    data_loader = DataLoader(
+        ds,
+        batch_size=args.micro_batch_size,
         sampler=sampler,
-        collate_fn=_collate_fn,
-        num_workers=0,
-        pin_memory=True,
+        collate_fn=partial(collate_fn, tokenizer=tokenizer),
+        num_workers=4
     )
-
     # -- DeepSpeed init ---------------------------------------------------- #
     ds_config = json.load(open(args.deepspeed_config))
 
-    # Override micro-batch & accumulation
-    ds_config["train_micro_batch_size_per_gpu"] = 1
-    ds_config["gradient_accumulation_steps"] = args.gradient_accumulation_steps
-
-    # Override LR
-    if "optimizer" in ds_config and "params" in ds_config["optimizer"]:
-        ds_config["optimizer"]["params"]["lr"] = args.lr
-
     # Compute total training steps and patch scheduler
     steps_per_epoch = math.ceil(
-        len(dataset) / (world_size * args.gradient_accumulation_steps)
+        len(ds) / (world_size * args.micro_batch_size * args.gradient_accumulation_steps)
     )
     total_steps = steps_per_epoch * args.num_epochs
-    if "scheduler" in ds_config and "params" in ds_config["scheduler"]:
-        ds_config["scheduler"]["params"]["total_num_steps"] = total_steps
-        ds_config["scheduler"]["params"]["warmup_num_steps"] = min(
-            args.warmup_steps, max(1, total_steps // 10)
-        )
-        ds_config["scheduler"]["params"]["warmup_max_lr"] = args.lr
+    
+    # Override DeepSpeed config
+    ds_config["train_micro_batch_size_per_gpu"] = args.micro_batch_size
+    ds_config["gradient_accumulation_steps"] = args.gradient_accumulation_steps
+    ds_config["optimizer"]["params"]["lr"] = args.lr
+    ds_config["scheduler"]["params"]["total_num_steps"] = total_steps
+    ds_config["scheduler"]["params"]["warmup_num_steps"] = int(0.02 * total_steps)
 
     model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
-        model=model, config=ds_config
+        model=model,
+        model_parameters=model.parameters(),
+        config=ds_config
     )
 
     if is_main:
         logger.info(
-            f"Dataset: {len(dataset)} samples | "
+            f"Dataset: {len(ds)} samples | "
             f"Steps/epoch: {steps_per_epoch} | Total steps: {total_steps} | "
             f"World size: {world_size} | "
             f"Grad accum: {args.gradient_accumulation_steps}"
@@ -317,10 +229,25 @@ def train(args):
         sampler.set_epoch(epoch)
         if is_main:
             logger.info("=" * 60 + f"  Epoch {epoch + 1}/{args.num_epochs}")
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}", disable=not is_main)
+        pbar = tqdm(data_loader, desc=f"Epoch {epoch + 1}", disable=not is_main)
 
         for batch in pbar:
-            prompt_ids = batch["input_ids"].to(device)  # [1, prompt_len]
+            generation_config = {
+                "input_ids": batch["input_ids"].to(device),
+                "attention_mask": batch["attention_mask"].to(device),
+                "logits_processor": logits_proc,
+                "max_new_tokens": args.max_new_tokens,
+                "pad_token_id": tokenizer.pad_token_id,
+                "eos_token_id": tokenizer.eos_token_id
+            }
+            # sampling
+            generation_config.update({
+                "do_sample": True,
+                "top_k": args.top_k,
+                "top_p": args.top_p,
+                "temperature": 1.0
+            })
+            prompt_ids = batch["input_ids"].to(device)
             prompt_len = prompt_ids.shape[1]
 
             # ============================================================== #
@@ -328,42 +255,48 @@ def train(args):
             # ============================================================== #
             unwrapped.eval()
             with torch.no_grad():
-                gen_sequences = unwrapped.generate(
-                    input_ids=prompt_ids,
-                    max_new_tokens=args.max_new_tokens,
-                    min_new_tokens=2,
-                    do_sample=True,
-                    top_p=args.top_p,
-                    top_k=args.top_k if args.top_k else None,
-                    temperature=1.0,
-                    logits_processor=logits_proc,
-                )  # [1, prompt_len + gen_len]
-
+                gen_sequences = unwrapped.generate(**generation_config)  # [B, prompt_len + gen_len]
             gen_len = gen_sequences.shape[1] - prompt_len
+            generated_ids = gen_sequences[:, prompt_len:]
 
-            if gen_len <= 1:
-                # Dummy backward to keep DeepSpeed accumulation in sync
-                dummy = lm_head.weight.sum() * 0.0
-                model_engine.backward(dummy)
-                model_engine.step()
-                continue
-
-            generated_ids = gen_sequences[0, prompt_len:].tolist()
-            torch.cuda.empty_cache()
+            # wandb: log generation samples table
+            if is_main and args.wandb:
+                gen_table = wandb.Table(columns=["step", "prefix", "response", "z_score"])
+                prefixes = batch["prefix"]
+                for i in range(gen_sequences.shape[0]):
+                    resp = tokenizer.decode(
+                        generated_ids[i].tolist(),
+                        skip_special_tokens=True,
+                    )
+                    z_score = z_score_per_row[i].item()
+                    gen_table.add_data(
+                        global_step + 1,
+                        prefixes[i] if i < len(prefixes) else "",
+                        resp,
+                        z_score,
+                    )
+                wandb.log({"gen/samples": gen_table}, step=global_step + 1)
+            # compute z_score: per-row, then mean over batch
+            non_pad_mask = generated_ids != tokenizer.pad_token_id   # (B, L)
+            green_mask = green_list_mask.to(device)[generated_ids]   # (B, L)
+            total_valid_per_row = non_pad_mask.sum(dim=1).float()   # (B,)
+            green_valid_per_row = (green_mask * non_pad_mask).sum(dim=1).float()   # (B,)
+            var_per_row = args.fraction * (1 - args.fraction) * total_valid_per_row
+            z_score_per_row = (green_valid_per_row - args.fraction * total_valid_per_row) / torch.sqrt(var_per_row)
+            z_score_avg = z_score_per_row.mean()
 
             # ============================================================== #
             #  Phase 2 -- Training forward (split lm_head for memory)         #
             # ============================================================== #
             unwrapped.train()
-
             full_ids = gen_sequences.detach()       # [1, prompt_len + gen_len]
-            attn_mask = torch.ones_like(full_ids)
+            attn_mask = (full_ids != tokenizer.pad_token_id).long()
 
             # Forward through transformer backbone (gradient-checkpointed)
             backbone_out = backbone(
                 input_ids=full_ids,
                 attention_mask=attn_mask,
-                use_cache=False,
+                use_cache=False
             )
             hidden_states = backbone_out[0]  # [1, seq_len, hidden_dim]
 
@@ -374,8 +307,8 @@ def train(args):
             gen_hidden = hidden_states[
                 :, prompt_len - 1 : prompt_len + gen_len - 1, :
             ]
+            gen_mask = attn_mask[:, prompt_len:]
             student_logits = lm_head(gen_hidden)  # [1, gen_len, vocab]
-
             # ============================================================== #
             #  Phase 3 -- KD loss (fp32 for numerical stability)              #
             # ============================================================== #
@@ -387,36 +320,31 @@ def train(args):
             s_log_probs = F.log_softmax(s_logits / T, dim=-1)
 
             # KL(teacher || student), averaged over generated positions
-            kl_per_token = F.kl_div(
-                s_log_probs, t_probs, reduction="none"
-            ).sum(dim=-1)  # [1, gen_len]
-            kd_loss = kl_per_token.mean() * (T ** 2)
-
+            kl_div = F.kl_div(s_log_probs, t_probs, reduction="none")
+            if args.english_token_loss:
+                english_mask_3d = english_mask.to(device).float().view(1, 1, -1)
+                kl_per_token = (kl_div * english_mask_3d).sum(dim=-1)
+            else:
+                kl_per_token = kl_div.sum(dim=-1)  # [bs, gen_len]
+            kl_per_token = kl_per_token * gen_mask.float()
+            num_valid_tokens = gen_mask.sum()
+            if num_valid_tokens > 0:
+                kd_loss = kl_per_token.sum() / num_valid_tokens * (T ** 2)
+            else:
+                kd_loss = torch.tensor(0.0, device=device, requires_grad=True)
             # ============================================================== #
             #  Phase 4 -- Backward + DeepSpeed step                           #
             # ============================================================== #
             model_engine.backward(kd_loss)
-
-            # Gradient norm (before step; gradients are zeroed by optimizer)
-            grad_norm = None
-            if is_main:
-                total_norm_sq = 0.0
-                for p in unwrapped.parameters():
-                    if p.grad is not None:
-                        total_norm_sq += p.grad.data.norm(2).item() ** 2
-                grad_norm = total_norm_sq ** 0.5
-
             model_engine.step()
+            grad_norm = model_engine.get_global_grad_norm()
+            if grad_norm is not None:
+                if isinstance(grad_norm, torch.Tensor):
+                    grad_norm = grad_norm.item()
             global_step += 1
 
             # -- Logging --------------------------------------------------- #
-            green_ratio = (
-                sum(1 for t in generated_ids if green_list_mask[t] > 0)
-                / len(generated_ids)
-            )
-
             if is_main:
-                # Optional: entropy metrics (mean over generated positions)
                 with torch.no_grad():
                     s_probs = F.softmax(s_logits / T, dim=-1)
                     student_entropy = (
@@ -429,32 +357,32 @@ def train(args):
                 pbar.set_postfix(
                     loss=f"{kd_loss.item():.4f}",
                     gn=f"{grad_norm:.2f}" if grad_norm is not None else "n/a",
-                    gr=f"{green_ratio:.2f}",
+                    zs=f"{z_score_avg:.2f}",
                     gl=gen_len,
                 )
 
                 step_in_epoch = ((global_step - 1) % steps_per_epoch) + 1
                 epoch_frac = epoch + step_in_epoch / steps_per_epoch
                 log_dict = {
+                    "optim/lr": optimizer.param_groups[0]["lr"],
+                    "optim/epoch": epoch_frac,
+                    "optim/grad_norm": grad_norm,
                     "train/kd_loss": kd_loss.item(),
-                    "train/grad_norm": grad_norm,
-                    "train/green_ratio": green_ratio,
-                    "train/gen_len": gen_len,
-                    "train/prompt_len": prompt_len,
+                    "train/z_score": z_score_avg,
                     "train/student_entropy": student_entropy,
                     "train/teacher_entropy": teacher_entropy,
-                    "train/lr": optimizer.param_groups[0]["lr"],
-                    "train/epoch": epoch_frac,
+                    "gen/prompt_len": prompt_len,
+                    "gen/response_len": gen_len,
                 }
+
                 if args.wandb:
-                    import wandb
                     wandb.log(log_dict, step=global_step)
 
                 if global_step % args.log_steps == 0:
                     logger.info(
                         f"Step {global_step}: kd_loss={kd_loss.item():.4f}  "
                         f"grad_norm={grad_norm:.4f}  "
-                        f"green_ratio={green_ratio:.3f}  gen_len={gen_len}  "
+                        f"z_score={z_score_avg:.3f}  gen_len={gen_len}  "
                         f"lr={optimizer.param_groups[0]['lr']:.2e}"
                     )
 
@@ -466,8 +394,6 @@ def train(args):
                     os.path.join(args.output_dir, f"checkpoint-{global_step}"),
                     is_main,
                 )
-
-            torch.cuda.empty_cache()
 
         # End-of-epoch save
         _save_model(
@@ -488,7 +414,6 @@ def train(args):
     if is_main:
         logger.info("Training complete!")
         if args.wandb:
-            import wandb
             wandb.finish()
 
 
@@ -553,12 +478,12 @@ if __name__ == "__main__":
 
     # Training hyper-parameters
     parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--micro_batch_size", type=int, default=4)
     parser.add_argument("--kd_temperature", type=float, default=1.0)
+    parser.add_argument("--english_token_loss", action="store_true", help="Compute KD loss only on English tokens")
     parser.add_argument("--num_epochs", type=int, default=3)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4)
-    parser.add_argument("--warmup_steps", type=int, default=100)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--max_prompt_length", type=int, default=None)
-    parser.add_argument("--num_samples", type=int, default=None)
 
     # Data / output
     parser.add_argument("--train_data", type=str, required=True)
