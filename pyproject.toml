@@ -1,19 +1,19 @@
 [project]
 name = "llm-watermark"
 version = "0.1.0"
-description = "Add your description here"
+description = "llm-watermark"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "deepspeed>=0.14.0",
-    "ipdb>=0.13.13",
-    "ipykernel>=7.1.0",
-    "matplotlib>=3.10.8",
-    "ninja>=1.13.0",
-    "packaging>=25.0",
-    "scipy>=1.15.3",
-    "sentencepiece>=0.2.1",
-    "tiktoken>=0.12.0",
-    "vllm>=0.14.1",
-    "wandb>=0.16.0",
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ipdb",
+    "ipykernel",
 ]
+
+[tool.uv.sources]
+vllm = { path = "/home/tianyichen/vllm" }
+
+[tool.setuptools]
+packages = ["train"]
