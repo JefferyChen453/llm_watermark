@@ -45,6 +45,8 @@ class GPTWatermarkBase:
                 if self.is_english_token(self.tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
             ]
             english_token_ids = sorted(english_token_ids)
+            self.english_mask = torch.zeros(model_emb_length).long()
+            self.english_mask[english_token_ids] = 1
             
             # Initialize mask with all False
             mask = np.zeros(model_emb_length, dtype=bool)
@@ -93,12 +95,25 @@ class GPTWatermarkLogitsWarper(GPTWatermarkBase, LogitsProcessor):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.record_raw_logits = kwargs.get('record_raw_logits', False)
+        if self.record_raw_logits:
+            self.raw_logits_history = []
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.FloatTensor:
         """Add the watermark to the logits and return new logits."""
+        if self.record_raw_logits:
+            self.raw_logits_history.append(scores.detach().clone())
         watermark = self.strength * self.green_list_mask
         new_logits = scores + watermark.to(scores.device)
         return new_logits
+
+    def get_recorded_logits(self):
+        if not self.record_raw_logits:
+            return None
+        return torch.stack(self.raw_logits_history, dim=1)
+
+    def clear_raw_logits_history(self):
+        self.raw_logits_history = []
 
 
 class GPTWatermarkDetector(GPTWatermarkBase):
