@@ -10,14 +10,34 @@ set -euo pipefail
 
 ROOT_DIR="${1:-/home/tianyichen/llm_watermark/UnigramWatermark/data/LFQA/baffo32-decapoda-research-llama-7B-hf}"
 MODEL_NAME="${MODEL_NAME:-Qwen/Qwen3-Next-80B-A3B-Instruct}"
-BATCH_SIZE="${BATCH_SIZE:-64}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
 MAX_LENGTH="${MAX_LENGTH:-8192}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_SCRIPT="${SCRIPT_DIR}/../compute_ppl.py"
 
 
-ROOT_DIR="/home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength5/Qwen-Qwen3-14B"
+# ROOT_DIR="/home/tianyichen/llm_watermark/temp/sft_train/strength2/Qwen-Qwen3-14B_LFQA"
+# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
+#   echo "Processing ${file}"
+#   python3 "${PY_SCRIPT}" \
+#     --input "${file}" \
+#     --model-name "${MODEL_NAME}" \
+#     --batch-size "${BATCH_SIZE}" \
+#     --max-length "${MAX_LENGTH}"
+# done
+
+# ROOT_DIR="/home/tianyichen/llm_watermark/temp/sft_train/strength2/Qwen-Qwen3-32B_LFQA"
+# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
+#   echo "Processing ${file}"
+#   python3 "${PY_SCRIPT}" \
+#     --input "${file}" \
+#     --model-name "${MODEL_NAME}" \
+#     --batch-size "${BATCH_SIZE}" \
+#     --max-length "${MAX_LENGTH}"
+# done
+
+ROOT_DIR="/home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-14B_LFQA"
 find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
   echo "Processing ${file}"
   python3 "${PY_SCRIPT}" \
@@ -27,7 +47,7 @@ find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r f
     --max-length "${MAX_LENGTH}"
 done
 
-ROOT_DIR="/home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-14B"
+ROOT_DIR="/home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-14B_OpenGen"
 find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
   echo "Processing ${file}"
   python3 "${PY_SCRIPT}" \
@@ -37,27 +57,7 @@ find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r f
     --max-length "${MAX_LENGTH}"
 done
 
-ROOT_DIR="/home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-14B"
-find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-  echo "Processing ${file}"
-  python3 "${PY_SCRIPT}" \
-    --input "${file}" \
-    --model-name "${MODEL_NAME}" \
-    --batch-size "${BATCH_SIZE}" \
-    --max-length "${MAX_LENGTH}"
-done
-
-ROOT_DIR="/home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-32B"
-find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-  echo "Processing ${file}"
-  python3 "${PY_SCRIPT}" \
-    --input "${file}" \
-    --model-name "${MODEL_NAME}" \
-    --batch-size "${BATCH_SIZE}" \
-    --max-length "${MAX_LENGTH}"
-done
-
-ROOT_DIR="/home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-32B"
+ROOT_DIR="/home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-32B_LFQA"
 find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
   echo "Processing ${file}"
   python3 "${PY_SCRIPT}" \
@@ -68,75 +68,12 @@ find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r f
 done
 
 
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/baffo32-decapoda-research-llama-7B-hf"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/meta-llama-Llama-2-13b-chat-hf"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
-
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/meta-llama-Llama-3.1-8B-Instruct"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/Qwen-Qwen3-8B"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/Qwen-Qwen3-14B"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
-
-# ROOT_DIR="/home/tianyichen/llm_watermark/outputs/max_new_500/Qwen-Qwen3-32B"
-
-# find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
-#   echo "Processing ${file}"
-#   python3 "${PY_SCRIPT}" \
-#     --input "${file}" \
-#     --model-name "${MODEL_NAME}" \
-#     --batch-size "${BATCH_SIZE}" \
-#     --max-length "${MAX_LENGTH}"
-# done
-
+ROOT_DIR="/home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-32B_OpenGen"
+find "${ROOT_DIR}" -type f -name "*.jsonl" ! -name "*_z.jsonl" | while read -r file; do
+  echo "Processing ${file}"
+  python3 "${PY_SCRIPT}" \
+    --input "${file}" \
+    --model-name "${MODEL_NAME}" \
+    --batch-size "${BATCH_SIZE}" \
+    --max-length "${MAX_LENGTH}"
+done

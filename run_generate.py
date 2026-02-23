@@ -144,7 +144,7 @@ if __name__ == "__main__":
     parser.add_argument_group("Data")
     parser.add_argument("--prompt_file", type=str, default="./UnigramWatermark/data/LFQA/inputs.jsonl")
     parser.add_argument("--output_dir", type=str, default="./UnigramWatermark/data/LFQA/")
-    parser.add_argument("--num_test", type=int, default=500)
+    parser.add_argument("--num_test", type=int, default=None)
 
     args = parser.parse_args()
 

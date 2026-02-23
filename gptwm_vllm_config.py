@@ -20,7 +20,6 @@ class vLLMGPTWatermarkLogitsWarper(LogitsProcessor):
         device: torch.device,
         is_pin_memory: bool,
     ):
-        # super().__init__(vllm_config, device, is_pin_memory)
         self.watermark = _WATERMARK_BASE
         assert self.watermark.green_list_mask.numel() == vllm_config.model_config.get_vocab_size(), "green_list_mask length mismatch with vocab size"
 

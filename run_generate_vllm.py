@@ -11,7 +11,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
-from dataset import load_generation_dataset
+from dataset import load_generation_dataset, load_jsonl, map_fn_with_dataset_prompt
 from gptwm import GPTWatermarkBase
 from gptwm_vllm_config import vLLMGPTWatermarkLogitsWarper, set_watermark_base
 
@@ -44,7 +44,7 @@ def main(args):
         f"strength_{args.strength}_"
         f"frac_{args.fraction}_"
         f"len_{args.max_new_tokens}_"
-        f"num_{args.num_test}_vllm.jsonl"
+        f"num_{args.num_test if args.num_test else len(load_jsonl(args.prompt_file))}_vllm.jsonl"
     )
     if args.only_English:
         output_file = output_file.replace(".jsonl", "_only_English.jsonl")
@@ -68,31 +68,30 @@ def main(args):
         tokenizer=tokenizer,
     )
     sampling_params = create_sampling_params(args)
-    
+
+    # Load dataset and apply chat template with dataset-specific system prompt
+    ds = load_generation_dataset(args.prompt_file, args.num_test).to_iterable_dataset()
+    ds = ds.map(
+        map_fn_with_dataset_prompt(tokenizer, args.dataset_type),
+        batched=True,
+    )
+
     # vLLM model (structure aligned with run_generate_incontext_vllm)
     llm_kwargs = {
         "model": args.model_name,
-        "trust_remote_code": True,
         "dtype": "bfloat16",
         "tensor_parallel_size": 8,
         "pipeline_parallel_size": 1,
         "gpu_memory_utilization": 0.90,
     }
     llm_kwargs["hf_overrides"] = {}
-
-    if args.max_model_len is not None:
-        llm_kwargs["max_model_len"] = args.max_model_len
-    else:
-        llm_kwargs["max_model_len"] = 131072
-
     if args.yarn:
         # Configure YaRN for long context
         print("Using YaRN for long context")
 
         # Override max_position_embeddings in model config to match max_model_len
-        target_max_position_embeddings = llm_kwargs["max_model_len"]
-        print(f"Overriding max_position_embeddings to {target_max_position_embeddings}")
-        llm_kwargs["hf_overrides"]["max_position_embeddings"] = target_max_position_embeddings
+        llm_kwargs["max_model_len"] = args.max_model_len
+        llm_kwargs["hf_overrides"]["max_position_embeddings"] = args.max_model_len
         llm_kwargs["hf_overrides"]["rope_scaling"] = {
             "rope_type": "yarn",
             "factor": args.yarn_factor,
@@ -108,20 +107,19 @@ def main(args):
     print("vLLM model loaded successfully")
     print("=" * 100)
 
-    ds = load_generation_dataset(args.prompt_file, args.num_test)
-
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
+        input_prompts = batch["input_prompts"]
         prefixes = batch["prefix"]
         gold_completions = batch["gold_completion"]
-        prompts = prefixes
 
-        outputs_vllm = llm.generate(prompts, sampling_params)
+        outputs_vllm = llm.generate(input_prompts, sampling_params)
         outputs = []
         for i, out in enumerate(outputs_vllm):
             gen_text = out.outputs[0].text
             outputs.append(
                 json.dumps(
                     {
+                        "input_prompts": input_prompts[i],
                         "prefix": prefixes[i],
                         "gold_completion": gold_completions[i],
                         "gen_completion": gen_text,
@@ -146,8 +144,8 @@ if __name__ == "__main__":
     gen.add_argument("--top_p", type=float, default=0.9)
     gen.add_argument("--yarn", action="store_true", help="Enable YaRN for long context")
     gen.add_argument("--yarn_factor", type=float, default=4.0)
-    gen.add_argument("--max_model_len", type=int, default=None)
-    gen.add_argument("--batch_size", type=int, default=32)
+    gen.add_argument("--max_model_len", type=int, default=131072)
+    gen.add_argument("--batch_size", type=int, default=64)
 
     wm = parser.add_argument_group("Watermark")
     wm.add_argument("--fraction", type=float, default=0.5)
@@ -158,7 +156,14 @@ if __name__ == "__main__":
     data = parser.add_argument_group("Data")
     data.add_argument("--prompt_file", type=str, default="./UnigramWatermark/data/LFQA/inputs.jsonl")
     data.add_argument("--output_dir", type=str, default="./UnigramWatermark/data/LFQA/")
-    data.add_argument("--num_test", type=int, default=500)
+    data.add_argument("--num_test", type=int, default=None)
+    data.add_argument(
+        "--dataset_type",
+        type=str,
+        default="lfqa",
+        choices=["lfqa", "opengen"],
+        help="Dataset type: lfqa or opengen, determines system prompt from prompt.py",
+    )
 
     args = parser.parse_args()
     if not os.path.exists(args.output_dir):

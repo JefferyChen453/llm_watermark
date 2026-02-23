@@ -76,11 +76,19 @@ OUTPUT_ROOT_DIR=/home/tianyichen/llm_watermark/temp
 
 Fractions=(0.1 0.2 0.3 0.4)
 for f in "${Fractions[@]}"; do
+    # uv run run_detect.py \
+    #     --model_name Qwen/Qwen3-14B \
+    #     --fraction "$f" \
+    #     --test_min_tokens 200 \
+    #     --input_file /home/tianyichen/llm_watermark/temp/sft_train/strength2/Qwen-Qwen3-14B/Qwen-Qwen3-14B_strength_2.0_frac_"$f"_len_500_num_2246_incontext_vllm_only_English.jsonl \
+    #     --only_English \
+    #     --combine_fraction
+
     uv run run_detect.py \
-        --model_name Qwen/Qwen3-14B \
+        --model_name Qwen/Qwen3-32B \
         --fraction "$f" \
         --test_min_tokens 200 \
-        --input_file /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-14B/Qwen-Qwen3-14B_strength_3.0_frac_"$f"_len_500_num_512_incontext_vllm_only_English.jsonl \
+        --input_file /home/tianyichen/llm_watermark/temp/sft_train/strength2/Qwen-Qwen3-32B_LFQA/Qwen-Qwen3-32B_strength_2.0_frac_"$f"_len_500_num_2246_incontext_vllm_only_English.jsonl \
         --only_English \
         --combine_fraction
 
@@ -88,15 +96,23 @@ for f in "${Fractions[@]}"; do
         --model_name Qwen/Qwen3-32B \
         --fraction "$f" \
         --test_min_tokens 200 \
-        --input_file /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-32B/Qwen-Qwen3-32B_strength_2.0_frac_"$f"_len_500_num_512_incontext_vllm_only_English.jsonl \
+        --input_file /home/tianyichen/llm_watermark/temp/sft_train/strength2/Qwen-Qwen3-32B_OpenGen/Qwen-Qwen3-32B_strength_2.0_frac_"$f"_len_500_num_7211_incontext_vllm_only_English.jsonl \
         --only_English \
         --combine_fraction
 
-    uv run run_detect.py \
-        --model_name Qwen/Qwen3-32B \
-        --fraction "$f" \
-        --test_min_tokens 200 \
-        --input_file /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-32B/Qwen-Qwen3-32B_strength_3.0_frac_"$f"_len_500_num_512_incontext_vllm_only_English.jsonl \
-        --only_English \
-        --combine_fraction
+    # uv run run_detect.py \
+    #     --model_name Qwen/Qwen3-32B \
+    #     --fraction "$f" \
+    #     --test_min_tokens 200 \
+    #     --input_file /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength2/Qwen-Qwen3-32B/Qwen-Qwen3-32B_strength_2.0_frac_"$f"_len_500_num_512_incontext_vllm_only_English.jsonl \
+    #     --only_English \
+    #     --combine_fraction
+
+    # uv run run_detect.py \
+    #     --model_name Qwen/Qwen3-32B \
+    #     --fraction "$f" \
+    #     --test_min_tokens 200 \
+    #     --input_file /home/tianyichen/llm_watermark/temp/incontext_add_logits_wm/strength3/Qwen-Qwen3-32B/Qwen-Qwen3-32B_strength_3.0_frac_"$f"_len_500_num_512_incontext_vllm_only_English.jsonl \
+    #     --only_English \
+    #     --combine_fraction
 done

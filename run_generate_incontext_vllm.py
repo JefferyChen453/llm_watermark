@@ -11,9 +11,10 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
-from dataset import load_generation_dataset, map_fn_with_chat_template
+from dataset import load_generation_dataset, load_jsonl, map_fn_with_chat_template
 from gptwm import GPTWatermarkBase
-from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
+from gptwm_incontext import InContextWatermarkGenerator
+from prompt import get_incontext_system_prompt
 from gptwm_vllm_config import set_watermark_base, vLLMGPTWatermarkLogitsWarper
 
 
@@ -40,13 +41,17 @@ def create_sampling_params(args):
 
 
 def main(args):
+    if "global_step" in args.model_name:
+        model_name = "_".join(args.model_name.split("/")[-3:-1])
+    else:
+        model_name = args.model_name.replace('/', '-')
     output_file = (
         f"{args.output_dir}/"
-        f"{args.model_name.replace('/', '-')}_"
+        f"{model_name}_"
         f"strength_{args.strength}_"
         f"frac_{args.fraction}_"
         f"len_{args.max_new_tokens}_"
-        f"num_{args.num_test}_incontext_vllm.jsonl"
+        f"num_{args.num_test if args.num_test else len(load_jsonl(args.prompt_file))}_incontext_vllm.jsonl"
     )
     if args.only_English:
         output_file = output_file.replace('.jsonl', '_only_English.jsonl')
@@ -71,11 +76,9 @@ def main(args):
     )
     
     # Generate green word list
-    if args.fraction > 0.0:
-        green_token_string = watermark_generator.get_green_token_string()
-    else:
-        green_token_string = ""
-    system_prompt = get_incontext_system_prompt(green_token_string)
+    green_token_string = watermark_generator.get_green_token_string()
+
+    system_prompt = get_incontext_system_prompt(args.dataset_type, green_token_string)
 
     # Load vLLM model with YaRN support if enabled
     llm_kwargs = {
@@ -153,14 +156,20 @@ def main(args):
         outputs = []
         for i, output in enumerate(outputs_vllm):
             gen_text = output.outputs[0].text
-            
-            outputs.append(json.dumps({
+            out_dict = {
                 "input_prompt": input_prompts[i],
-                "actual_prompt": output.prompt,
                 "prefix": prefixes[i],
                 "gold_completion": gold_completions[i],
                 "gen_completion": gen_text,
-            }, ensure_ascii=False))
+            }
+            if args.save_gen_batch:
+                prompt_ids = tokenizer(output.prompt, add_special_tokens=False)["input_ids"]
+                gen_ids = output.outputs[0].token_ids
+                gen_mask = [1] * len(gen_ids)
+                out_dict["prompt_ids"] = prompt_ids
+                out_dict["gen_ids"] = gen_ids
+                out_dict["gen_mask"] = gen_mask
+            outputs.append(json.dumps(out_dict, ensure_ascii=False))
 
         # Write in batches
         with open(output_file, "a") as f:
@@ -188,15 +197,21 @@ if __name__ == "__main__":
     parser.add_argument_group("Watermark")
     parser.add_argument("--add_logits_wm", action="store_true", help="Add logits-based watermarking")
     parser.add_argument("--fraction", type=float, default=0.5)
-    parser.add_argument("--strength", type=float, default=2.0)
+    parser.add_argument("--strength", type=float, default=0.0)
     parser.add_argument("--wm_key", type=int, default=0)
     parser.add_argument("--only_English", action="store_true")
 
     # Data parameters
     parser.add_argument_group("Data")
+    parser.add_argument("--dataset_type", type=str, default="lfqa", choices=["lfqa", "opengen"])
     parser.add_argument("--prompt_file", type=str, default="./UnigramWatermark/data/LFQA/inputs.jsonl")
     parser.add_argument("--output_dir", type=str, default="./test")
-    parser.add_argument("--num_test", type=int, default=512)
+    parser.add_argument("--num_test", type=int, default=None)
+    parser.add_argument(
+        "--save_gen_batch",
+        action="store_true",
+        help="Save raw prompt_ids, gen_ids and gen_mask for offline KD (exact token ids from vLLM)",
+    )
 
     args = parser.parse_args()
 

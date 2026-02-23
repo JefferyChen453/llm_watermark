@@ -52,38 +52,46 @@
 # done
 
 # ----- test different fractions -----
-# FRACTIONS=(0.0 0.1 0.2 0.3 0.4 0.5)
-# for f in "${FRACTIONS[@]}"; do
-#     uv run run_generate.py \
-#         --model_name Qwen/Qwen3-14B \
-#         --max_new_tokens 500 \
-#         --fraction "$f" \
-#         --strength 2.0 \
-#         --only_English \
-#         --output_dir /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/fraction/Qwen-Qwen3-14B \
-#         --num_test 512
-
-#     # uv run run_generate.py \
-#     #     --model_name Qwen/Qwen3-32B \
-#     #     --max_new_tokens 500 \
-#     #     --fraction "$f" \
-#     #     --strength 2.0 \
-#     #     --only_English \
-#     #     --output_dir /home/tianyichen/llm_watermark/outputs/only_eng/logits_wm/fraction/Qwen-Qwen3-32B \
-#     #     --num_test 512
-# done
-
-# ----- test incontext -----
-FRACTIONS=(0.3)
-# FRACTIONS=(0.1 0.2 0.4 0.5)
+FRACTIONS=(0.0 0.1 0.2 0.3 0.4)
 for f in "${FRACTIONS[@]}"; do
-    uv run run_generate_incontext_vllm.py \
+    uv run run_generate_vllm.py \
         --model_name Qwen/Qwen3-14B \
         --max_new_tokens 500 \
-        --yarn \
-        --max_model_len 131072 \
         --fraction "$f" \
-        --output_dir /home/tianyichen/llm_watermark/outputs/only_eng/incontext_vllm/Qwen-Qwen3-14B_withlinewithoutspace \
+        --strength 2.0 \
         --only_English \
-        --num_test 512
+        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/LFQA/train.jsonl \
+        --output_dir /home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-14B_LFQA \
+        --dataset_type lfqa
+
+    uv run run_generate_vllm.py \
+        --model_name Qwen/Qwen3-32B \
+        --max_new_tokens 500 \
+        --fraction "$f" \
+        --strength 2.0 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/LFQA/train.jsonl \
+        --output_dir /home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-32B_LFQA \
+        --dataset_type lfqa
+
+    uv run run_generate_vllm.py \
+        --model_name Qwen/Qwen3-14B \
+        --max_new_tokens 500 \
+        --fraction "$f" \
+        --strength 2.0 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/OpenGen/train.jsonl \
+        --output_dir /home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-14B_OpenGen \
+        --dataset_type opengen
+
+    uv run run_generate_vllm.py \
+        --model_name Qwen/Qwen3-32B \
+        --max_new_tokens 500 \
+        --fraction "$f" \
+        --strength 2.0 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/OpenGen/train.jsonl \
+        --output_dir /home/tianyichen/llm_watermark/outputs/sft_train/Qwen-Qwen3-32B_OpenGen \
+        --dataset_type opengen
 done
+

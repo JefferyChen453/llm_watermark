@@ -13,7 +13,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer
 from transformers import AutoConfig
 
 from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
-from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
+from gptwm_incontext import InContextWatermarkGenerator
+from prompt import get_incontext_system_prompt
 
 
 def main(args):
@@ -66,7 +67,7 @@ def main(args):
     
     # Generate green word list
     green_token_string = watermark_generator.get_green_token_string()
-    system_prompt = get_incontext_system_prompt(green_token_string)
+    system_prompt = get_incontext_system_prompt(args.dataset_type, green_token_string)
     
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test)
@@ -149,6 +150,7 @@ if __name__ == "__main__":
     # Data parameters
     parser.add_argument_group("Data")
     parser.add_argument("--prompt_file", type=str, default="./UnigramWatermark/data/LFQA/inputs.jsonl")
+    parser.add_argument("--dataset_type", type=str, default="lfqa")
     parser.add_argument("--output_dir", type=str, default="./test")
     parser.add_argument("--num_test", type=int, default=512)
 
