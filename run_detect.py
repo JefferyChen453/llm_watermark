@@ -46,8 +46,8 @@ def main(args):
             gen_tokens = tokenizer(cur_data['gen_completion'], add_special_tokens=False)["input_ids"]
             if len(gen_tokens) >= args.test_min_tokens:
                 frac0_z_score_list.append(detector.detect(gen_tokens))
-            else:
-                print(f"Warning: sequence {idx} is too short to test.")
+            # else:
+            #     print(f"Warning: sequence {idx} is too short to test.")
         negative_num = len(frac0_z_score_list)
     z_score_list = z_score_list + frac0_z_score_list
     
