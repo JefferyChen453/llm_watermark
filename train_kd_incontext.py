@@ -49,7 +49,8 @@ import wandb
 
 from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
 from gptwm import GPTWatermarkLogitsWarper
-from gptwm_incontext import InContextWatermarkGenerator, get_incontext_system_prompt
+from gptwm_incontext import InContextWatermarkGenerator
+from prompt import get_incontext_system_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,7 @@ def train(args):
         tokenizer=tokenizer,
     )
     green_str = ic_gen.get_green_token_string() if args.fraction > 0 else ""
-    system_prompt = get_incontext_system_prompt(green_str)
+    system_prompt = get_incontext_system_prompt("lfqa", green_str)
     if is_main:
         n_tok = len(tokenizer.encode(system_prompt))
         logger.info(f"System prompt length: ~{n_tok} tokens")
