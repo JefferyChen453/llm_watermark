@@ -1,23 +1,8 @@
-#!/usr/bin/env python3
-"""
-Convert LFQA JSONL to Parquet format for SFT.
-
-Input JSONL format (per line):
-  - input_prompt: full formatted prompt (with system/watermark)
-  - prefix: "Q: <question>\\nA:" 
-  - gold_completion: target answer for SFT
-  - gen_completion: model-generated answer (not used for SFT)
-
-Output Parquet columns:
-  - prompt: the question/prefix (input to model)
-  - response: the gold_completion (target output)
-"""
 from gptwm_incontext import InContextWatermarkGenerator
 from transformers import AutoTokenizer, AutoConfig
 import argparse
 import json
 import os
-import random
 from prompt import get_incontext_system_prompt
 
 try:
@@ -137,7 +122,7 @@ def main():
                 add_generation_prompt=True,
                 enable_thinking=False
             )
-            response = obj.get("gold_completion", "")
+            response = obj.get("gen_completion", "")
             if input_prompt and response:
                 rows.append({"prompt": input_prompt, "response": response})
 
