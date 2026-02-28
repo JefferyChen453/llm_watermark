@@ -35,8 +35,7 @@ def main(args):
         gen_tokens = tokenizer(cur_data['gen_completion'], add_special_tokens=False)["input_ids"]
         if len(gen_tokens) >= args.test_min_tokens:
             z_score_list.append(detector.detect(gen_tokens))
-        else:
-            print(f"Warning: sequence {idx} is too short to test.")
+
     positive_num = len(z_score_list)
     negative_num = None
 
@@ -70,7 +69,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--model_name", type=str, default="baffo32/decapoda-research-llama-7B-hf")
     parser.add_argument("--fraction", type=float, default=0.5)
-    parser.add_argument("--strength", type=float, default=2.0)
+    parser.add_argument("--strength", type=float, default=0.0)
     parser.add_argument("--threshold", type=float, default=6.0)
     parser.add_argument("--wm_key", type=int, default=0)
     parser.add_argument("--input_file", type=str, default="./data/example_output.jsonl")

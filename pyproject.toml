@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "llm-watermark"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "gdown>=5.2.1",
+]
 
 [dependency-groups]
 dev = [
