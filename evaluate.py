@@ -11,6 +11,10 @@ import csv
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 
 def extract_strength_from_filename(filename: str) -> float:
     """Extract strength value from filename."""
@@ -82,6 +86,134 @@ def calculate_tpr(z_scores: List[float], tau: float) -> float:
         return 0.0
     count = sum(1 for z in z_scores if z >= tau)
     return count / len(z_scores)
+
+
+def calculate_auc_roc(z_scores: List[float], labels: List[int]) -> float:
+    """Calculate AUC-ROC from z_scores and binary labels using the trapezoidal rule.
+
+    Args:
+        z_scores: List of z-scores (higher = more likely positive/watermarked)
+        labels: List of true labels (1 for positive, 0 for negative)
+
+    Returns:
+        AUC-ROC value in [0, 1], or 0.0 if degenerate input
+    """
+    if len(z_scores) == 0 or len(z_scores) != len(labels):
+        return 0.0
+
+    n_pos = sum(labels)
+    n_neg = len(labels) - n_pos
+
+    if n_pos == 0 or n_neg == 0:
+        return 0.0
+
+    # Sort by z_score descending; ties are handled by accumulating before updating AUC
+    sorted_pairs = sorted(zip(z_scores, labels), key=lambda x: x[0], reverse=True)
+
+    auc = 0.0
+    tp, fp = 0, 0
+    tpr_prev, fpr_prev = 0.0, 0.0
+    prev_score = None
+
+    for score, label in sorted_pairs:
+        if prev_score is not None and score != prev_score:
+            tpr = tp / n_pos
+            fpr = fp / n_neg
+            auc += (fpr - fpr_prev) * (tpr + tpr_prev) / 2
+            tpr_prev, fpr_prev = tpr, fpr
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+        prev_score = score
+
+    # Add the final segment to (1.0, 1.0)
+    tpr = tp / n_pos
+    fpr = fp / n_neg
+    auc += (fpr - fpr_prev) * (tpr + tpr_prev) / 2
+
+    return auc
+
+
+def compute_roc_curve(z_scores: List[float], labels: List[int]) -> Tuple[List[float], List[float]]:
+    """Compute ROC curve (fpr_points, tpr_points) by sweeping all unique thresholds.
+
+    Returns lists starting at (0, 0) and ending at (1, 1).
+    """
+    n_pos = sum(labels)
+    n_neg = len(labels) - n_pos
+
+    if n_pos == 0 or n_neg == 0:
+        return [0.0, 1.0], [0.0, 1.0]
+
+    sorted_pairs = sorted(zip(z_scores, labels), key=lambda x: x[0], reverse=True)
+
+    fpr_pts = [0.0]
+    tpr_pts = [0.0]
+    tp, fp = 0, 0
+    prev_score = None
+
+    for score, label in sorted_pairs:
+        if prev_score is not None and score != prev_score:
+            fpr_pts.append(fp / n_neg)
+            tpr_pts.append(tp / n_pos)
+        if label == 1:
+            tp += 1
+        else:
+            fp += 1
+        prev_score = score
+
+    fpr_pts.append(fp / n_neg)
+    tpr_pts.append(tp / n_pos)
+
+    return fpr_pts, tpr_pts
+
+
+def plot_roc_curves(
+    roc_groups: Dict,
+    group_key_label: str,
+    output_png: Path,
+    model_name: str,
+) -> None:
+    """Plot ROC curves grouped by only_English and save as PNG.
+
+    Args:
+        roc_groups: {only_english: [{'label': str, 'fpr': list, 'tpr': list, 'auc': float}, ...]}
+        group_key_label: human-readable name for the curve identifier (e.g. 'Fraction' or 'Strength')
+        output_png: destination path for the PNG file
+        model_name: used in the figure title
+    """
+    n_groups = len(roc_groups)
+    fig, axes = plt.subplots(1, n_groups, figsize=(6 * n_groups, 5), squeeze=False)
+
+    colors = plt.cm.tab10.colors
+
+    for col_idx, only_english in enumerate(sorted(roc_groups.keys())):
+        ax = axes[0][col_idx]
+        curves = roc_groups[only_english]
+
+        for i, curve in enumerate(curves):
+            ax.plot(
+                curve['fpr'], curve['tpr'],
+                color=colors[i % len(colors)],
+                label=f"{curve['label']} (AUC={curve['auc']:.3f})",
+                linewidth=1.5,
+            )
+
+        ax.plot([0, 1], [0, 1], 'k--', linewidth=0.8, label='Random')
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_xlabel('False Positive Rate')
+        ax.set_ylabel('True Positive Rate')
+        suffix = ' (only_English)' if only_english else ''
+        ax.set_title(f"{model_name}{suffix}\nROC by {group_key_label}")
+        ax.legend(loc='lower right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(output_png, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"ROC plot saved to {output_png}")
 
 
 def calculate_metrics_from_labels(z_scores: List[float], labels: List[int], tau: float) -> Tuple[float, float, float, float]:
@@ -177,13 +309,15 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
             only_english_groups[only_english] = {}
         only_english_groups[only_english][fraction] = filepath
     
-    # Prepare results
+    # Prepare results and ROC data
     results = []
-    
+    roc_groups: Dict[bool, List[Dict]] = {}
+
     # Process each only_English group separately
     for only_english in sorted(only_english_groups.keys()):
         group_files = only_english_groups[only_english]
-        
+        roc_groups[only_english] = []
+
         print(f"\nProcessing only_English={only_english} group...")
         if tau_thres is not None:
             print(f"Using provided threshold tau = {tau_thres} for all fractions in this group")
@@ -220,7 +354,9 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
                 print(f"  Found tau = {tau}")
             
             fpr, tpr, tnr, fnr = calculate_metrics_from_labels(z_scores, labels, tau)
-            
+            auc_roc = calculate_auc_roc(z_scores, labels)
+            fpr_pts, tpr_pts = compute_roc_curve(z_scores, labels)
+
             results.append({
                 'model_name': model_name,
                 'fraction': fraction,
@@ -231,9 +367,16 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
                 'TNR': tnr,
                 'TPR': tpr,
                 'FNR': fnr,
+                'AUC_ROC': auc_roc,
                 'avg_ppl': avg_ppl if avg_ppl is not None else ''
             })
-    
+            roc_groups[only_english].append({
+                'label': f'Fraction {fraction}',
+                'fpr': fpr_pts,
+                'tpr': tpr_pts,
+                'auc': auc_roc,
+            })
+
     # Write to CSV
     if output_csv is None:
         output_csv = directory / f"{model_name}_evaluation.csv"
@@ -242,12 +385,19 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
     
     print(f"\nWriting results to {output_csv}...")
     with open(output_csv, 'w', newline='') as f:
-        fieldnames = ['model_name', 'fraction', 'only_English', 'length', 'tau', 'FPR', 'TNR', 'TPR', 'FNR', 'avg_ppl']
+        fieldnames = ['model_name', 'fraction', 'only_English', 'length', 'tau', 'FPR', 'TNR', 'TPR', 'FNR', 'AUC_ROC', 'avg_ppl']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    
+
     print(f"Results written to {output_csv}")
+
+    # Plot and save ROC curves
+    output_png = Path(str(output_csv).replace('.csv', '.png'))
+    non_empty_roc = {k: v for k, v in roc_groups.items() if v}
+    if non_empty_roc:
+        plot_roc_curves(non_empty_roc, 'Fraction', output_png, model_name)
+
     print("="*100)
     print(f"\nSummary:")
     # Group results by only_English for summary
@@ -262,7 +412,7 @@ def process_directory_fraction(directory: str, output_csv: str = None, tau_thres
         group_results = by_only_english[only_english]
         print(f"\n  only_English={only_english}:")
         for result in group_results:
-            print(f"    Fraction {result['fraction']}: tau={result['tau']}, FPR={result['FPR']:.4f}, TPR={result['TPR']:.4f}, TNR={result['TNR']:.4f}, FNR={result['FNR']:.4f}")
+            print(f"    Fraction {result['fraction']}: tau={result['tau']}, FPR={result['FPR']:.4f}, TPR={result['TPR']:.4f}, TNR={result['TNR']:.4f}, FNR={result['FNR']:.4f}, AUC_ROC={result['AUC_ROC']:.4f}")
     print("="*100)
 
 
@@ -303,13 +453,15 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
             only_english_groups[only_english] = {}
         only_english_groups[only_english][strength] = filepath
     
-    # Prepare results
+    # Prepare results and ROC data
     results = []
-    
+    roc_groups: Dict[bool, List[Dict]] = {}
+
     # Process each only_English group separately
     for only_english in sorted(only_english_groups.keys()):
         group_files = only_english_groups[only_english]
-        
+        roc_groups[only_english] = []
+
         # Check if strength 0.0 file exists for this group
         if 0.0 not in group_files:
             print(f"No strength=0.0 file found for only_English={only_english} in {directory}")
@@ -348,6 +500,7 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
             'TNR': tnr,
             'TPR': 0.0,  # TPR is 0 for strength=0.0 (no watermark)
             'FNR': 1.0,  # FNR is 1.0 for strength=0.0
+            'AUC_ROC': '',
             'avg_ppl': avg_ppl_0 if avg_ppl_0 is not None else ''
         })
         
@@ -363,7 +516,13 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
             
             tpr = calculate_tpr(z_scores, tau)
             fnr = 1 - tpr  # False Negative Rate
-            
+
+            # AUC-ROC: negatives = strength=0.0 scores, positives = this strength's scores
+            combined_z = z_scores_0 + z_scores
+            combined_labels = [0] * len(z_scores_0) + [1] * len(z_scores)
+            auc_roc = calculate_auc_roc(combined_z, combined_labels)
+            fpr_pts, tpr_pts = compute_roc_curve(combined_z, combined_labels)
+
             results.append({
                 'model_name': model_name,
                 'strength': strength,
@@ -374,9 +533,16 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
                 'TNR': tnr,  # Same TNR for all in this group
                 'TPR': tpr,
                 'FNR': fnr,
+                'AUC_ROC': auc_roc,
                 'avg_ppl': avg_ppl if avg_ppl is not None else ''
             })
-    
+            roc_groups[only_english].append({
+                'label': f'Strength {strength}',
+                'fpr': fpr_pts,
+                'tpr': tpr_pts,
+                'auc': auc_roc,
+            })
+
     # Write to CSV
     if output_csv is None:
         output_csv = directory / f"{model_name}_evaluation.csv"
@@ -385,12 +551,19 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
     
     print(f"\nWriting results to {output_csv}...")
     with open(output_csv, 'w', newline='') as f:
-        fieldnames = ['model_name', 'strength', 'only_English', 'length', 'tau', 'FPR', 'TNR', 'TPR', 'FNR', 'avg_ppl']
+        fieldnames = ['model_name', 'strength', 'only_English', 'length', 'tau', 'FPR', 'TNR', 'TPR', 'FNR', 'AUC_ROC', 'avg_ppl']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    
+
     print(f"Results written to {output_csv}")
+
+    # Plot and save ROC curves
+    output_png = Path(str(output_csv).replace('.csv', '.png'))
+    non_empty_roc = {k: v for k, v in roc_groups.items() if v}
+    if non_empty_roc:
+        plot_roc_curves(non_empty_roc, 'Strength', output_png, model_name)
+
     print("="*100)
     print(f"\nSummary:")
     # Group results by only_English for summary
@@ -412,7 +585,8 @@ def process_directory(directory: str, output_csv: str = None, tau_thres: float =
             print(f"    TNR: {strength_0_result['TNR']:.4f}")
             for result in group_results:
                 if result['strength'] != 0.0:
-                    print(f"    Strength {result['strength']}: TPR={result['TPR']:.4f}, FNR={result['FNR']:.4f}")
+                    auc_str = f", AUC_ROC={result['AUC_ROC']:.4f}" if result['AUC_ROC'] != '' else ''
+                    print(f"    Strength {result['strength']}: TPR={result['TPR']:.4f}, FNR={result['FNR']:.4f}{auc_str}")
     print("="*100)
 
 
