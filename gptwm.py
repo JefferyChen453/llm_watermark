@@ -34,7 +34,8 @@ class GPTWatermarkBase:
         only_English: bool = False,
         tokenizer: Optional[object] = None
     ):
-        rng = np.random.default_rng(self._hash_fn(watermark_key))
+        rng = np.random.default_rng(watermark_key)
+        self._rng = rng
         
         self.tokenizer = tokenizer
 
@@ -72,12 +73,6 @@ class GPTWatermarkBase:
         self.strength = strength
         self.fraction = fraction
         self.only_English = only_English
-
-    @staticmethod
-    def _hash_fn(x: int) -> int:
-        """solution from https://stackoverflow.com/questions/67219691/python-hash-function-that-returns-32-or-64-bits"""
-        x = np.int64(x)
-        return int.from_bytes(hashlib.sha256(x).digest()[:4], 'little')
 
 
 class GPTWatermarkLogitsWarper(GPTWatermarkBase, LogitsProcessor):

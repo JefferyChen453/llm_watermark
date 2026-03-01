@@ -31,4 +31,6 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
             s = self.tokenizer.convert_tokens_to_string([token])
             if s:
                 green_token_list.append(s)
+        self._rng.shuffle(green_token_list)
+        
         return sep.join(green_token_list)
