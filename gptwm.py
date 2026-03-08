@@ -1,9 +1,58 @@
-import hashlib
 from typing import Any, List, Optional
 import numpy as np
 from scipy.stats import norm
 import torch
 from transformers import LogitsProcessor
+
+
+_english_token_ids_cache: dict = {}
+
+
+def _get_english_token_ids(tokenizer, vocab_size: int):
+    """Compute list of English token IDs once per (tokenizer, vocab_size); reused by mask building and GPTWatermarkBase."""
+    cache_key = (id(tokenizer), vocab_size)
+    if cache_key not in _english_token_ids_cache:
+        vocab = tokenizer.get_vocab()
+        english_token_ids = [
+            tid for tok, tid in vocab.items()
+            if GPTWatermarkBase.is_english_token(tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
+        ]
+        _english_token_ids_cache[cache_key] = sorted(english_token_ids)
+    return _english_token_ids_cache[cache_key]
+
+
+def _make_green_list_mask_numpy(
+    watermark_key: int,
+    fraction: float,
+    vocab_size: int,
+    model_emb_length: int,
+    only_English: bool,
+    tokenizer: Optional[object],
+    english_token_ids: Optional[List[int]] = None,
+) -> np.ndarray:
+    """Build the green-list mask for a given seed as numpy bool array (for caching)."""
+    assert watermark_key is not None, "watermark_key is None"
+    rng = np.random.default_rng(watermark_key)
+
+    if only_English:
+        if english_token_ids is None:
+            english_token_ids = _get_english_token_ids(tokenizer, vocab_size)
+
+        num_green_english = int(fraction * len(english_token_ids))
+        english_mask = np.array([True] * num_green_english + [False] * (len(english_token_ids) - num_green_english))
+        rng.shuffle(english_mask)
+        mask = np.zeros(model_emb_length, dtype=bool)
+        for i, token_id in enumerate(english_token_ids):
+            mask[token_id] = english_mask[i]
+    else:
+        green_list_size = int(fraction * vocab_size)
+        mask = np.array([True] * green_list_size + [False] * (vocab_size - green_list_size))
+        rng.shuffle(mask)
+        mask = np.concatenate([
+            mask,
+            np.zeros(model_emb_length - len(mask), dtype=bool),
+        ])
+    return mask
 
 
 class GPTWatermarkBase:
@@ -34,45 +83,18 @@ class GPTWatermarkBase:
         only_English: bool = False,
         tokenizer: Optional[object] = None
     ):
-        rng = np.random.default_rng(watermark_key)
-        self._rng = rng
-        
         self.tokenizer = tokenizer
-
-        if only_English:
-            vocab = self.tokenizer.get_vocab()
-            english_token_ids = [
-                tid for tok, tid in vocab.items() 
-                if self.is_english_token(self.tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
-            ]
-            english_token_ids = sorted(english_token_ids)
-            self.english_mask = torch.zeros(model_emb_length).long()
-            self.english_mask[english_token_ids] = 1
-            
-            # Initialize mask with all False
-            mask = np.zeros(model_emb_length, dtype=bool)
-            
-            # Only assign green-list to English tokens
-            num_green_english = int(fraction * len(english_token_ids))
-            english_mask = np.array([True] * num_green_english + [False] * (len(english_token_ids) - num_green_english))
-            rng.shuffle(english_mask)
-            
-            # Set green-list for English tokens
-            for i, token_id in enumerate(english_token_ids):
-                mask[token_id] = english_mask[i]
-        else:
-            green_list_size = int(fraction * vocab_size)
-            mask = np.array([True] * green_list_size + [False] * (vocab_size - green_list_size))
-            rng.shuffle(mask)
-            mask = np.concatenate([
-                mask,
-                np.zeros(model_emb_length - len(mask), dtype=bool),
-            ]) # handle the case when model_emb_length > vocab_size
-
-        self.green_list_mask = torch.tensor(mask, dtype=torch.float32)
+        self.green_list_mask = torch.tensor(_make_green_list_mask_numpy(
+            watermark_key, fraction, vocab_size, model_emb_length, only_English, tokenizer
+        ), dtype=torch.float32)
         self.strength = strength
         self.fraction = fraction
         self.only_English = only_English
+
+        if only_English:
+            english_token_ids = _get_english_token_ids(tokenizer, vocab_size)
+            self.english_mask = torch.zeros(model_emb_length).long()
+            self.english_mask[english_token_ids] = 1
 
 
 class GPTWatermarkLogitsWarper(GPTWatermarkBase, LogitsProcessor):
@@ -90,25 +112,62 @@ class GPTWatermarkLogitsWarper(GPTWatermarkBase, LogitsProcessor):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.record_raw_logits = kwargs.get('record_raw_logits', False)
-        if self.record_raw_logits:
-            self.raw_logits_history = []
 
     def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.FloatTensor:
         """Add the watermark to the logits and return new logits."""
-        if self.record_raw_logits:
-            self.raw_logits_history.append(scores.detach().clone())
         watermark = self.strength * self.green_list_mask
         new_logits = scores + watermark.to(scores.device)
         return new_logits
 
-    def get_recorded_logits(self):
-        if not self.record_raw_logits:
-            return None
-        return torch.stack(self.raw_logits_history, dim=1)
 
-    def clear_raw_logits_history(self):
-        self.raw_logits_history = []
+class BatchWatermarkLogitsProcessor(LogitsProcessor):
+    """
+    Logits processor that applies a per-sample green-list watermark using a seed per batch item.
+
+    Set ``current_batch_seeds`` (list of int, length = batch size) before each generate call.
+    Seeds are used to derive the green-list mask (same logic as GPTWatermarkLogitsWarper).
+    Masks are cached by seed to avoid recomputation.
+    """
+
+    def __init__(
+        self,
+        fraction: float = 0.5,
+        strength: float = 2.0,
+        vocab_size: int = None,
+        model_emb_length: int = None,
+        only_English: bool = False,
+        tokenizer: Optional[object] = None,
+    ):
+        self.fraction = fraction
+        self.strength = strength
+        self.vocab_size = vocab_size
+        self.model_emb_length = model_emb_length
+        self.only_English = only_English
+        self.tokenizer = tokenizer
+        self._mask_cache = {}
+        self.current_batch_seeds = None
+
+    def _get_mask(self, seed: int) -> torch.Tensor:
+        if seed not in self._mask_cache:
+            self._mask_cache[seed] = torch.tensor(_make_green_list_mask_numpy(
+                seed,
+                self.fraction,
+                self.vocab_size,
+                self.model_emb_length,
+                self.only_English,
+                self.tokenizer,
+            ), dtype=torch.float32)
+        return self._mask_cache[seed]
+
+    def __call__(self, input_ids: torch.Tensor, scores: torch.Tensor) -> torch.FloatTensor:
+        if self.current_batch_seeds is None:
+            return scores
+        batch_size = scores.shape[0]
+        for i in range(batch_size):
+            seed = self.current_batch_seeds[i]
+            mask = self._get_mask(seed)
+            scores[i] = scores[i] + self.strength * mask.to(scores.device)
+        return scores
 
 
 class GPTWatermarkDetector(GPTWatermarkBase):
@@ -150,14 +209,13 @@ class GPTWatermarkDetector(GPTWatermarkBase):
 
     def detect(self, sequence: List[int]) -> float:
         """Detect the watermark in a sequence of tokens and return the z value."""
-        green_tokens = int(sum(self.green_list_mask[i] for i in sequence))
-
+        green_tokens = int(self.green_list_mask[sequence].sum())
         return self._z_score(green_tokens, len(sequence), self.fraction)
 
     def unidetect(self, sequence: List[int]) -> float:
         """Detect the watermark in a sequence of tokens and return the z value. Just for unique tokens."""
         sequence = list(set(sequence))
-        green_tokens = int(sum(self.green_list_mask[i] for i in sequence))
+        green_tokens = int(self.green_list_mask[sequence].sum())
         return self._z_score(green_tokens, len(sequence), self.fraction)
     
     def dynamic_threshold(self, sequence: List[int], alpha: float, vocab_size: int) -> (bool, float):
