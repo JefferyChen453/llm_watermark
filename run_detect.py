@@ -1,8 +1,58 @@
 import argparse
 import json
+from multiprocessing import Pool
 from tqdm import tqdm
 from transformers import AutoTokenizer, LlamaTokenizer, AutoConfig
 from gptwm import GPTWatermarkDetector
+
+# Globals for worker processes (set by pool initializer)
+_worker_tokenizer = None
+_worker_config = None
+
+
+def _init_worker(model_name: str):
+    """Initialize tokenizer and config in each worker process."""
+    global _worker_tokenizer, _worker_config
+    if "decapoda-research-llama-7B-hf" in model_name:
+        _worker_tokenizer = LlamaTokenizer.from_pretrained(model_name)
+    else:
+        _worker_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if _worker_tokenizer.pad_token is None:
+            _worker_tokenizer.pad_token = _worker_tokenizer.eos_token
+    _worker_tokenizer.padding_side = "left"
+    _worker_config = AutoConfig.from_pretrained(model_name)
+
+
+def _detect_chunk(chunk_and_args):
+    """Run detection on a chunk of data. Uses global tokenizer/config set by initializer."""
+    chunk, args_dict = chunk_and_args
+    tokenizer = _worker_tokenizer
+    config = _worker_config
+    detector_cache = {}
+    min_tokens = args_dict["test_min_tokens"]
+    wm_key = args_dict["wm_key"]
+
+    def get_detector(seed: int) -> GPTWatermarkDetector:
+        if seed not in detector_cache:
+            detector_cache[seed] = GPTWatermarkDetector(
+                fraction=args_dict["fraction"],
+                strength=args_dict["strength"],
+                vocab_size=tokenizer.vocab_size,
+                model_emb_length=config.vocab_size,
+                watermark_key=seed,
+                only_English=args_dict["only_English"],
+                tokenizer=tokenizer,
+            )
+        return detector_cache[seed]
+
+    z_scores = []
+    for cur_data in chunk:
+        gen_tokens = tokenizer(cur_data["gen_completion"], add_special_tokens=False)["input_ids"]
+        if len(gen_tokens) >= min_tokens:
+            seed = cur_data.get("seed", wm_key)
+            detector = get_detector(seed)
+            z_scores.append(detector.detect(gen_tokens))
+    return z_scores
 
 
 def main(args):
@@ -13,40 +63,81 @@ def main(args):
         with open(fraction0_file, 'r') as f:
             fraction0_data = [json.loads(x) for x in f.read().strip().split("\n")]
 
-    if 'decapoda-research-llama-7B-hf' in args.model_name:
-        tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
+    if args.workers is None or args.workers <= 1:
+        if 'decapoda-research-llama-7B-hf' in args.model_name:
+            tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"
+        model_config = AutoConfig.from_pretrained(args.model_name)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "left"
+        tokenizer = None
+        model_config = None
 
-    model_config = AutoConfig.from_pretrained(args.model_name)
-    detector = GPTWatermarkDetector(fraction=args.fraction,
-                                    strength=args.strength,
-                                    vocab_size=tokenizer.vocab_size,
-                                    model_emb_length=model_config.vocab_size,
-                                    watermark_key=args.wm_key,
-                                    only_English=args.only_English,
-                                    tokenizer=tokenizer)
+    def get_detector(seed: int) -> GPTWatermarkDetector:
+        if seed not in detector_cache:
+            detector_cache[seed] = GPTWatermarkDetector(
+                fraction=args.fraction,
+                strength=args.strength,
+                vocab_size=tokenizer.vocab_size,
+                model_emb_length=model_config.vocab_size,
+                watermark_key=seed,
+                only_English=args.only_English,
+                tokenizer=tokenizer,
+            )
+        return detector_cache[seed]
 
-    z_score_list = []
-    for idx, cur_data in tqdm(enumerate(data), total=len(data)):
-        gen_tokens = tokenizer(cur_data['gen_completion'], add_special_tokens=False)["input_ids"]
-        if len(gen_tokens) >= args.test_min_tokens:
-            z_score_list.append(detector.detect(gen_tokens))
+    detector_cache = {}
+
+    def run_detection_on_data(data_list, desc="Detecting"):
+        if args.workers is None or args.workers <= 1:
+            z_scores = []
+            for cur_data in tqdm(data_list, total=len(data_list), desc=desc):
+                gen_tokens = tokenizer(
+                    cur_data["gen_completion"], add_special_tokens=False
+                )["input_ids"]
+                if len(gen_tokens) >= args.test_min_tokens:
+                    seed = cur_data.get("seed", args.wm_key)
+                    detector = get_detector(seed)
+                    z_scores.append(detector.detect(gen_tokens))
+            return z_scores
+        else:
+            args_dict = {
+                "fraction": args.fraction,
+                "strength": args.strength,
+                "test_min_tokens": args.test_min_tokens,
+                "wm_key": args.wm_key,
+                "only_English": args.only_English,
+            }
+            chunk_size = max(1, (len(data_list) + args.workers - 1) // args.workers)
+            chunks = [
+                (data_list[i : i + chunk_size], args_dict)
+                for i in range(0, len(data_list), chunk_size)
+            ]
+            with Pool(
+                args.workers,
+                initializer=_init_worker,
+                initargs=(args.model_name,),
+            ) as pool:
+                chunk_results = list(
+                    tqdm(
+                        pool.imap(_detect_chunk, chunks),
+                        total=len(chunks),
+                        desc=desc,
+                    )
+                )
+            return [z for chunk_zs in chunk_results for z in chunk_zs]
+
+    z_score_list = run_detection_on_data(data, desc="Main set")
 
     positive_num = len(z_score_list)
     negative_num = None
 
     frac0_z_score_list = []
     if args.combine_fraction:
-        for idx, cur_data in tqdm(enumerate(fraction0_data), total=len(fraction0_data)):
-            gen_tokens = tokenizer(cur_data['gen_completion'], add_special_tokens=False)["input_ids"]
-            if len(gen_tokens) >= args.test_min_tokens:
-                frac0_z_score_list.append(detector.detect(gen_tokens))
-            # else:
-            #     print(f"Warning: sequence {idx} is too short to test.")
+        frac0_z_score_list = run_detection_on_data(fraction0_data, desc="Frac0")
         negative_num = len(frac0_z_score_list)
     z_score_list = z_score_list + frac0_z_score_list
     
@@ -71,12 +162,14 @@ if __name__ == "__main__":
     parser.add_argument("--fraction", type=float, default=0.5)
     parser.add_argument("--strength", type=float, default=0.0)
     parser.add_argument("--threshold", type=float, default=6.0)
-    parser.add_argument("--wm_key", type=int, default=0)
+    parser.add_argument("--wm_key", type=int, default=None)
     parser.add_argument("--input_file", type=str, default="./data/example_output.jsonl")
     parser.add_argument("--test_min_tokens", type=int, default=200)
     parser.add_argument("--only_English", action="store_true")
     parser.add_argument("--combine_fraction", action="store_true")
+    parser.add_argument("--workers", type=int, default=1, help="Number of processes for detection")
 
     args = parser.parse_args()
 
     main(args)
+
