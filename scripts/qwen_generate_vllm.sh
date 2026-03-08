@@ -28,8 +28,11 @@
 # done
 
 
+# FRACTIONS=(0.0 0.1 0.2 0.3 0.4)
+# STRENGTHS=(2.0 3.0 4.0)
+
 FRACTIONS=(0.0 0.1 0.2 0.3 0.4)
-STRENGTHS=(2.0 3.0 4.0)
+STRENGTHS=(4.0)
 for s in "${STRENGTHS[@]}"; do
     for f in "${FRACTIONS[@]}"; do
         uv run run_generate_vllm.py \
@@ -40,6 +43,6 @@ for s in "${STRENGTHS[@]}"; do
             --strength "$s" \
             --wm_key 0 \
             --only_English \
-            --output_dir /home/tianyichen/llm_watermark/outputs/generate_vllm/strength_"$s"
+            --output_dir /home/tianyichen/llm_watermark/debug/test2
     done
 done

@@ -16,16 +16,18 @@
 # done
 
 FRACTIONS=(0.1 0.2 0.3 0.4)
-STRENGTHS=(2.0 3.0 4.0)
+STRENGTHS=(4.0)
 for s in "${STRENGTHS[@]}"; do
     for f in "${FRACTIONS[@]}"; do
     uv run run_detect.py \
         --model_name Qwen/Qwen3-14B \
         --fraction "$f" \
-        --wm_key 0 \
-        --input_file /home/tianyichen/llm_watermark/outputs/generate_vllm/strength_"$s"/Qwen-Qwen3-14B_strength_"$s"_frac_"$f"_len_500_num_512_vllm_only_English.jsonl \
-        --workers 1 \
+        --input_file /home/tianyichen/llm_watermark/debug/test4_5keys/Qwen-Qwen3-14B_strength_"$s"_frac_"$f"_len_500_num_512_vllm_only_English.jsonl \
+        --workers 8 \
         --only_English \
         --combine_fraction
+        # --wm_key 0 \
     done
 done
+
+

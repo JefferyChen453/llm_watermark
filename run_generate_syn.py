@@ -57,7 +57,7 @@ def main(args):
     ])
 
     # Per-sample seeds 0..9999, assigned in order (sample i gets seed i % 10000)
-    seed_list = list(range(1))
+    seed_list = list(range(1, args.seed_num + 1))
 
     # Load dataset: apply chat template per example using dataset_type
     ds = load_generation_dataset(args.prompt_file, args.num_test)
@@ -151,6 +151,7 @@ if __name__ == "__main__":
     parser.add_argument_group("Watermark")
     parser.add_argument("--fraction", type=float, default=0.5)
     parser.add_argument("--strength", type=float, default=2.0)
+    parser.add_argument("--seed_num", type=int, default=100)
     parser.add_argument("--only_English", action="store_true")
 
     # Data parameters
