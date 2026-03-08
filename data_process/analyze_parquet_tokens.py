@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--parquet_path",
-        default="/home/tianyichen/llm_watermark/verl/data/sft/Qwen-Qwen3-32B_combined_filtered_data_pos_6782_neg_2123.parquet",
+        default="/home/tianyichen/llm_watermark/verl/data/sft_modified_loss/Qwen-Qwen3-32B_combined_LFQA_1893_OpenGen_5071.parquet",
         help="Path to parquet file",
     )
     parser.add_argument(
