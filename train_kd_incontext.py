@@ -47,7 +47,7 @@ from transformers import (
 )
 import wandb
 
-from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
+from dataset import collate_fn, load_generation_dataset, make_prompt_mapper
 from gptwm import GPTWatermarkLogitsWarper
 from gptwm_incontext import InContextWatermarkGenerator
 from prompt import get_incontext_system_prompt
@@ -168,7 +168,7 @@ def train(args):
     # -- Dataset & DataLoader ---------------------------------------------- #
     ds = load_generation_dataset(args.train_data)
     ds = ds.map(
-        map_fn_with_chat_template_ids(tokenizer, system_prompt),
+        make_prompt_mapper(tokenizer, system_prompt, tokenize=True),
         num_proc=os.cpu_count() // 2
     )
     sampler = DistributedSampler(
