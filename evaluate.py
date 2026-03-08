@@ -598,12 +598,7 @@ if __name__ == '__main__':
         'directory',
         help='Path to directory containing _z.jsonl files'
     )
-    parser.add_argument(
-        'output_csv',
-        nargs='?',
-        default=None,
-        help='Path to output CSV file (default: <directory>/<model_name>_evaluation.csv)'
-    )
+
     parser.add_argument(
         '--tau_thres',
         type=float,
@@ -627,7 +622,9 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
+    output_csv = os.path.join(args.directory, "evaluation.csv")
+
     if args.fraction_or_strength == 'fraction':
-        process_directory_fraction(args.directory, args.output_csv, args.tau_thres, args.target_fpr)
+        process_directory_fraction(args.directory, output_csv, args.tau_thres, args.target_fpr)
     else:
-        process_directory(args.directory, args.output_csv, args.tau_thres)
+        process_directory(args.directory, output_csv, args.tau_thres)

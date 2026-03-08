@@ -133,3 +133,4 @@ data
 *.ipynb
 temp*
 .cursor
+debug
