@@ -12,7 +12,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, LlamaTokenizer
 from transformers import AutoConfig
 
-from dataset import collate_fn, load_generation_dataset, map_fn_with_chat_template_ids
+from dataset import collate_fn, load_generation_dataset, make_prompt_mapper
 from gptwm_incontext import InContextWatermarkGenerator
 from prompt import get_incontext_system_prompt
 
@@ -72,7 +72,7 @@ def main(args):
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test)
     ds = ds.map(
-        map_fn_with_chat_template_ids(tokenizer, system_prompt),
+        make_prompt_mapper(tokenizer, system_prompt, tokenize=True),
         num_proc=os.cpu_count() // 2
     )
     data_loader = DataLoader(
@@ -111,7 +111,7 @@ def main(args):
         )
 
         for i in range(len(gen_text)):
-            input_prompt = batch["input_prompts"][i]
+            input_prompt = batch["input_prompt"][i]
             prefix = batch["prefix"][i]
             gold_completion = batch["gold_completion"][i]
             gen_completion = gen_text[i][len(input_prompt):]

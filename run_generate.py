@@ -13,7 +13,7 @@ from transformers import (
     LogitsProcessorList,
 )
 
-from dataset import collate_fn, load_generation_dataset, map_fn_ids
+from dataset import collate_fn, load_generation_dataset, make_tokenize_mapper
 from gptwm import GPTWatermarkLogitsWarper
 
 def main(args):
@@ -60,7 +60,7 @@ def main(args):
     # load dataset
     ds = load_generation_dataset(args.prompt_file, args.num_test)
     ds = ds.map(
-        map_fn_ids(tokenizer),
+        make_tokenize_mapper(tokenizer),
         batched=True,
     )
     data_loader = DataLoader(

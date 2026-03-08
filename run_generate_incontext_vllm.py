@@ -11,7 +11,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
-from dataset import load_generation_dataset, load_jsonl, map_fn_with_chat_template
+from dataset import load_generation_dataset, load_jsonl, make_prompt_mapper
 from gptwm import GPTWatermarkBase
 from gptwm_incontext import InContextWatermarkGenerator
 from prompt import get_incontext_system_prompt
@@ -140,7 +140,7 @@ def main(args):
 
     # Tokenize with chat template
     ds = ds.map(
-        map_fn_with_chat_template(tokenizer, system_prompt),
+        make_prompt_mapper(tokenizer, system_prompt),
         batched=True
     )
 

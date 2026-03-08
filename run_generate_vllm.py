@@ -11,7 +11,8 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoTokenizer, LlamaTokenizer
 from vllm import LLM, SamplingParams
 
-from dataset import load_generation_dataset, load_jsonl, map_fn_with_dataset_prompt
+from dataset import load_generation_dataset, load_jsonl, make_prompt_mapper
+from prompt import get_system_prompt
 from gptwm import GPTWatermarkBase
 from gptwm_vllm_config import vLLMGPTWatermarkLogitsWarper, set_watermark_base
 
@@ -72,7 +73,7 @@ def main(args):
     # Load dataset and apply chat template with dataset-specific system prompt
     ds = load_generation_dataset(args.prompt_file, args.num_test).to_iterable_dataset()
     ds = ds.map(
-        map_fn_with_dataset_prompt(tokenizer, args.dataset_type),
+        make_prompt_mapper(tokenizer, get_system_prompt(args.dataset_type)),
         batched=True,
     )
 
