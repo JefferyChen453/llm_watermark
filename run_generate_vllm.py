@@ -22,7 +22,7 @@ logging.getLogger("vllm").setLevel(logging.ERROR)
 
 
 def build_base_sampling_kwargs(args) -> dict:
-    base = dict(max_tokens=args.max_new_tokens)
+    base = dict(min_tokens=args.min_new_tokens, max_tokens=args.max_new_tokens)
     if args.beam_size is not None:
         base.update(n=args.beam_size, use_beam_search=True)
     else:
@@ -142,7 +142,8 @@ if __name__ == "__main__":
 
     gen = parser.add_argument_group("Generation")
     gen.add_argument("--model_name", type=str, required=True)
-    gen.add_argument("--max_new_tokens", type=int, default=200)
+    gen.add_argument("--min_new_tokens", type=int, default=500)
+    gen.add_argument("--max_new_tokens", type=int, default=600)
     gen.add_argument("--beam_size", type=int, default=None)
     gen.add_argument("--top_k", type=int, default=None)
     gen.add_argument("--top_p", type=float, default=0.9)

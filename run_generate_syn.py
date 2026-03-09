@@ -82,6 +82,7 @@ def main(args):
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),
             "logits_processor": watermark_processor,
+            "min_new_tokens": args.min_new_tokens,
             "max_new_tokens": args.max_new_tokens,
             "return_dict_in_generate": True,
         }
@@ -141,7 +142,8 @@ if __name__ == "__main__":
     # Model generation parameters
     parser.add_argument_group("Generation")
     parser.add_argument("--model_name", type=str)
-    parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--min_new_tokens", type=int, default=500)
+    parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)

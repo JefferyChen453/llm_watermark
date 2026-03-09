@@ -86,6 +86,7 @@ def main(args):
         generation_config = {
             "input_ids": batch["input_ids"].to(model.device),
             "attention_mask": batch["attention_mask"].to(model.device),
+            "min_new_tokens": args.min_new_tokens,
             "max_new_tokens": args.max_new_tokens,
             "return_dict_in_generate": True,
         }
@@ -135,7 +136,8 @@ if __name__ == "__main__":
     # Model generation parameters
     parser.add_argument_group("Model Generation")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-8B")
-    parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--min_new_tokens", type=int, default=500)
+    parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
     parser.add_argument("--top_p", type=float, default=0.9)

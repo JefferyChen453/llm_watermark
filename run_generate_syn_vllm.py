@@ -66,7 +66,7 @@ def main(args):
     print("vLLM model loaded successfully")
     print("=" * 100)
 
-    base_sampling_kwargs = dict(max_tokens=args.max_new_tokens)
+    base_sampling_kwargs = dict(min_tokens=args.min_new_tokens, max_tokens=args.max_new_tokens)
     if args.beam_size is not None:
         base_sampling_kwargs.update(n=args.beam_size, use_beam_search=True)
     else:
@@ -116,7 +116,8 @@ if __name__ == "__main__":
     # Model generation parameters
     parser.add_argument_group("Generation")
     parser.add_argument("--model_name", type=str)
-    parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--min_new_tokens", type=int, default=500)
+    parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)

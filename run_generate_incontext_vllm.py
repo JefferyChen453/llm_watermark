@@ -29,6 +29,7 @@ def create_sampling_params(args):
         return SamplingParams(
             n=args.beam_size,
             use_beam_search=True,
+            min_tokens=args.min_new_tokens,
             max_tokens=args.max_new_tokens,
         )
     else:
@@ -36,6 +37,7 @@ def create_sampling_params(args):
             temperature=1.0,
             top_k=args.top_k if args.top_k is not None else -1,
             top_p=args.top_p,
+            min_tokens=args.min_new_tokens,
             max_tokens=args.max_new_tokens,
         )
 
@@ -184,7 +186,8 @@ if __name__ == "__main__":
     # Model generation parameters
     parser.add_argument_group("Model Generation")
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen3-8B")
-    parser.add_argument("--max_new_tokens", type=int, default=200)
+    parser.add_argument("--min_new_tokens", type=int, default=500)
+    parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
     parser.add_argument("--top_p", type=float, default=0.9)
