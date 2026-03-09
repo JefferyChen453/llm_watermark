@@ -3,4 +3,6 @@
 #     uv run evaluate.py /home/tianyichen/llm_watermark/outputs/generate_vllm/strength_"$s" --fraction_or_strength fraction --target_fpr 0.01
 # done
 
-uv run evaluate.py /home/tianyichen/llm_watermark/debug/test4_5keys --fraction_or_strength fraction --target_fpr 0.01
+uv run evaluate.py /home/tianyichen/llm_watermark/debug/test2_copy --fraction_or_strength fraction --target_fpr 0.01
+uv run evaluate.py /home/tianyichen/llm_watermark/debug/test3_100keys_copy --fraction_or_strength fraction --target_fpr 0.01
+uv run evaluate.py /home/tianyichen/llm_watermark/debug/test4_5keys_copy --fraction_or_strength fraction --target_fpr 0.01

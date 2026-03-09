@@ -35,7 +35,7 @@ def compute_batch_ppl(
         batch_nll: total negative log-likelihood over completion tokens
         batch_tokens: total number of completion tokens considered
     """
-    prefixes = [item["input_prompts"] for item in batch]
+    prefixes = [item["input_prompt"] for item in batch]
     completions = [item["gen_completion"] for item in batch]
 
     # Tokenize prefix and full text to derive prefix lengths

@@ -145,19 +145,19 @@ def main(args):
     )
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
-        input_prompts = batch["input_prompts"]
+        input_prompt = batch["input_prompt"]
         prefixes = batch["prefix"]
         gold_completions = batch["gold_completion"]
         
         # Generate with vLLM
-        outputs_vllm = llm.generate(input_prompts, sampling_params)
+        outputs_vllm = llm.generate(input_prompt, sampling_params)
         
         # Process results
         outputs = []
         for i, output in enumerate(outputs_vllm):
             gen_text = output.outputs[0].text
             out_dict = {
-                "input_prompt": input_prompts[i],
+                "input_prompt": input_prompt[i],
                 "prefix": prefixes[i],
                 "gold_completion": gold_completions[i],
                 "gen_completion": gen_text,

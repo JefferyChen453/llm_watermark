@@ -54,7 +54,7 @@ def main():
     rows = load_jsonl_simple(args.input_jsonl)
     parquet_rows = []
     for r in rows:
-        prompt = r.get("input_prompt") or r.get("input_prompts") or ""
+        prompt = r.get("input_prompt") or r.get("input_prompt") or ""
         if isinstance(prompt, list):
             prompt = prompt[0] if prompt else ""
         response = r.get("gold_completion", "")

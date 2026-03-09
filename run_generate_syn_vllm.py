@@ -77,7 +77,7 @@ def main(args):
         )
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
-        input_prompts = batch["input_prompt"]
+        input_prompt = batch["input_prompt"]
         indices = batch["idx"]
         batch_seeds = [seed_list[idx % len(seed_list)] for idx in indices]
 
@@ -89,13 +89,13 @@ def main(args):
             for seed in batch_seeds
         ]
 
-        outputs_vllm = llm.generate(input_prompts, sampling_params_list)
+        outputs_vllm = llm.generate(input_prompt, sampling_params_list)
 
         outputs = []
         for i, out in enumerate(outputs_vllm):
             outputs.append(json.dumps({
                 "prefix": batch["prefix"][i],
-                "input_prompt": input_prompts[i],
+                "input_prompt": input_prompt[i],
                 "gold_completion": batch["gold_completion"][i],
                 "gen_completion": out.outputs[0].text,
                 "seed": batch_seeds[i],

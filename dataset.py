@@ -56,7 +56,7 @@ def make_prompt_mapper(tokenizer, system_prompt: str, *, tokenize: bool = False)
     Returns:
         A map function.  Depending on *tokenize*:
 
-        * ``False`` -- adds ``input_prompts`` (list[str]).
+        * ``False`` -- adds ``input_prompt`` (list[str]).
         * ``True``  -- adds ``input_prompt`` (str), ``input_ids``,
           ``attention_mask``.
     """
@@ -79,7 +79,7 @@ def make_prompt_mapper(tokenizer, system_prompt: str, *, tokenize: bool = False)
             return example
     else:
         def _fn(example):
-            example["input_prompts"] = [
+            example["input_prompt"] = [
                 apply_chat_template(tokenizer, system_prompt, p)
                 for p in example["prefix"]
             ]
