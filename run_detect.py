@@ -60,8 +60,18 @@ def main(args):
         data = [json.loads(x) for x in f.read().strip().split("\n")]
     if args.combine_fraction:
         fraction0_file = args.input_file.replace(f'frac_{args.fraction}', f'frac_0.0')
-        with open(fraction0_file, 'r') as f:
-            fraction0_data = [json.loads(x) for x in f.read().strip().split("\n")]
+        if args.use_generated_neg_data:
+            with open(fraction0_file, 'r') as f:
+                fraction0_data = [json.loads(x) for x in f.read().strip().split("\n")]
+        else:
+            fraction0_data = []
+            for d in data:
+                fraction0_data.append({
+                    "prefix": d["prefix"],
+                    "input_prompt": d["input_prompt"],
+                    "gen_completion": d["gold_completion"],
+                    "seed": d.get("seed", args.wm_key)
+                })
 
     if args.workers is None or args.workers <= 1:
         if 'decapoda-research-llama-7B-hf' in args.model_name:
@@ -163,6 +173,7 @@ if __name__ == "__main__":
     parser.add_argument("--strength", type=float, default=0.0)
     parser.add_argument("--threshold", type=float, default=6.0)
     parser.add_argument("--wm_key", type=int, default=None)
+    parser.add_argument("--use_generated_neg_data", action="store_true")
     parser.add_argument("--input_file", type=str, default="./data/example_output.jsonl")
     parser.add_argument("--test_min_tokens", type=int, default=200)
     parser.add_argument("--only_English", action="store_true")
