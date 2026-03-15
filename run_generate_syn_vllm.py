@@ -61,7 +61,24 @@ def main(args):
         "tensor_parallel_size": 8,
         "pipeline_parallel_size": 1,
         "gpu_memory_utilization": 0.90,
+        "hf_overrides": {},
     }
+
+    if args.max_model_len is not None:
+        llm_kwargs["max_model_len"] = args.max_model_len
+
+    if args.yarn:
+        print("Using YaRN for long context")
+        target_max_position_embeddings = args.max_model_len or 262144
+        print(f"Overriding max_position_embeddings to {target_max_position_embeddings}")
+        llm_kwargs["max_model_len"] = target_max_position_embeddings
+        llm_kwargs["hf_overrides"]["max_position_embeddings"] = target_max_position_embeddings
+        llm_kwargs["hf_overrides"]["rope_scaling"] = {
+            "rope_type": "yarn",
+            "factor": args.yarn_factor,
+            "original_max_position_embeddings": 32768,
+        }
+
     llm = LLM(**llm_kwargs, logits_processors=[GPTWatermarkAdapterLogitsProcessor])
     print("vLLM model loaded successfully")
     print("=" * 100)
@@ -77,7 +94,8 @@ def main(args):
         )
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
-        input_prompt = batch["input_prompt"]
+        input_prompt = batch["prefix"]
+        # input_prompt = batch["input_prompt"]
         indices = batch["idx"]
         batch_seeds = [seed_list[idx % len(seed_list)] for idx in indices]
 
@@ -99,7 +117,7 @@ def main(args):
                 "gold_completion": batch["gold_completion"][i],
                 "gen_completion": out.outputs[0].text,
                 "seed": batch_seeds[i],
-                "dataset_type": batch["dataset_type"][i],
+                # "dataset_type": batch["dataset_type"][i],
             }, ensure_ascii=False))
 
         with open(output_file, "a") as f:
@@ -122,6 +140,9 @@ if __name__ == "__main__":
     parser.add_argument("--beam_size", type=int, default=None)
     parser.add_argument("--top_k", type=int, default=None)
     parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--yarn", action="store_true", help="Enable YaRN for long context")
+    parser.add_argument("--yarn_factor", type=float, default=4.0, help="YaRN scaling factor")
+    parser.add_argument("--max_model_len", type=int, default=None, help="Maximum model length for vLLM")
 
     # Watermark parameters
     parser.add_argument_group("Watermark")

@@ -79,7 +79,7 @@ def _process_positive_chunk(chunk, fraction, tau):
                 tokenizer=tokenizer,
             )
         try:
-            z_score = detector_cache[key].detect(gen_tokens)
+            z_score = detector_cache[key].unidetect(gen_tokens)
         except Exception as e:
             continue
         if z_score > tau:

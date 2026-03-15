@@ -51,7 +51,7 @@ def _detect_chunk(chunk_and_args):
         if len(gen_tokens) >= min_tokens:
             seed = cur_data.get("seed", wm_key)
             detector = get_detector(seed)
-            z_scores.append(detector.detect(gen_tokens))
+            z_scores.append(detector.unidetect(gen_tokens))
     return z_scores
 
 
@@ -111,7 +111,7 @@ def main(args):
                 if len(gen_tokens) >= args.test_min_tokens:
                     seed = cur_data.get("seed", args.wm_key)
                     detector = get_detector(seed)
-                    z_scores.append(detector.detect(gen_tokens))
+                    z_scores.append(detector.unidetect(gen_tokens))
             return z_scores
         else:
             args_dict = {
