@@ -32,6 +32,7 @@ def _make_green_list_mask_numpy(
 ) -> np.ndarray:
     """Build the green-list mask for a given seed as numpy bool array (for caching)."""
     assert watermark_key is not None, "watermark_key is None"
+    assert model_emb_length > vocab_size, "model_emb_length is less than vocab_size"
     rng = np.random.default_rng(watermark_key)
 
     if only_English:

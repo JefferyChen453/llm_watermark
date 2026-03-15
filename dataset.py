@@ -7,12 +7,15 @@ from prompt import get_system_prompt
 
 
 # ------------------------------ Utility functions ------------------------------
-def load_jsonl(jsonl_path):
-    rows = []
-    with open(jsonl_path) as f:
-        for line in f:
-            rows.append(json.loads(line))
-    return rows
+def load_jsonl(file_path):
+    with open(file_path, 'r') as file:
+        return [json.loads(line) for line in file]
+
+
+def save_jsonl(data, file_path):
+    with open(file_path, 'w') as file:
+        for d in data:
+            file.write(json.dumps(d) + '\n')
 
 
 def load_generation_dataset(jsonl_path, num_test=None):

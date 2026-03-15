@@ -1,12 +1,17 @@
-from gptwm_incontext import InContextWatermarkGenerator
-from transformers import AutoTokenizer, AutoConfig
-from prompt import get_incontext_system_prompt
-
 import argparse
+from functools import lru_cache
 import json
 import os
-from functools import lru_cache
+import sys
+from pathlib import Path
 from tqdm import tqdm
+from transformers import AutoConfig, AutoTokenizer
+
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from gptwm_incontext import InContextWatermarkGenerator
+from prompt import get_incontext_system_prompt
 
 
 try:
@@ -111,7 +116,8 @@ def main():
             response = obj.get("gen_completion")
             seed = obj.get("seed")
             fraction = obj.get("fraction")
-            dataset_type = obj.get("dataset_type", obj.get("type"))
+            # dataset_type = obj.get("dataset_type", obj.get("type"))
+            dataset_type = "lfqa"
             z_score = obj.get("z_score")
 
             # Require minimal fields to build prompt/response.
@@ -126,14 +132,22 @@ def main():
                 green_token_string = generator.get_green_token_string()
 
             system_prompt = get_incontext_system_prompt(dataset_type, green_token_string)
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prefix},
-            ]
+            no_watermark_system_prompt = get_incontext_system_prompt(dataset_type)
 
             input_prompt = tokenizer.apply_chat_template(
-                messages,
+                conversation=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prefix},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            no_watermark_input_prompt = tokenizer.apply_chat_template(
+                conversation= [
+                    {"role": "system", "content": no_watermark_system_prompt},
+                    {"role": "user", "content": prefix},
+                ],
                 tokenize=False,
                 add_generation_prompt=True,
                 enable_thinking=False,
@@ -142,6 +156,7 @@ def main():
             rows.append(
                 {
                     "prompt": input_prompt,
+                    "prompt_no_incontext_wm": no_watermark_input_prompt,
                     "response": response,
                     "prefix": prefix,
                     "seed": seed,

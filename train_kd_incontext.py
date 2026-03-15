@@ -473,7 +473,7 @@ if __name__ == "__main__":
     parser.add_argument("--only_English", action="store_true")
 
     # Generation (during training)
-    parser.add_argument("--max_new_tokens", type=int, default=500)
+    parser.add_argument("--max_new_tokens", type=int, default=600)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--top_k", type=int, default=None)
 
