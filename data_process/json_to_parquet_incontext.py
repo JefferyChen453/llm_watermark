@@ -42,7 +42,7 @@ def save_parquet(rows, path):
 
 def main():
     parser = argparse.ArgumentParser(description="LFQA JSON(L) -> Parquet with in-context system prompt (seed=0).")
-    parser.add_argument("--input", default="data/processed_data/vblagoje_lfqa/validation_177.json", help="Input JSON or JSONL path.")
+    parser.add_argument("--input", default="/home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/validation_sample_64.json", help="Input JSON or JSONL path.")
     parser.add_argument("--output", default=None, help="Output Parquet path (default: input with .parquet).")
     parser.add_argument("--model_name", default="Qwen/Qwen3-14B", help="Model for tokenizer/config.")
     parser.add_argument("--seed", type=int, default=1, help="Watermark key (default 0).")
@@ -64,6 +64,9 @@ def main():
     )
     green_token_string = generator.get_green_token_string()
     system_prompt = get_incontext_system_prompt("lfqa", green_token_string)
+    # with open("x.text", "r", encoding="utf-8") as f:
+    #     content = f.read().strip()
+    # system_prompt = content
 
     rows = []
     with open(input_path, "r", encoding="utf-8") as f:
@@ -76,12 +79,11 @@ def main():
             response = obj.get("gold_completion")
             if not prefix or not response:
                 continue
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prefix},
-            ]
             prompt = tokenizer.apply_chat_template(
-                messages,
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prefix},
+                ],
                 tokenize=False,
                 add_generation_prompt=True,
                 enable_thinking=False,
@@ -92,7 +94,42 @@ def main():
                 "prefix": prefix,
                 "seed": args.seed,
                 "dataset_type": "lfqa",
+                "positive_or_negative": "positive",
             })
+
+
+
+    with open(input_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            prefix = obj.get("prefix")
+            response = obj.get("gold_completion")
+            if not prefix or not response:
+                continue
+            prompt = tokenizer.apply_chat_template(
+                [
+                    # {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prefix},
+                ],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+            rows.append({
+                "prompt": prompt,
+                "response": response,
+                "prefix": prefix,
+                "seed": args.seed,
+                "dataset_type": "lfqa",
+                "positive_or_negative": "negative",
+            })
+
+
+
+
 
     os.makedirs(output_path.parent or ".", exist_ok=True)
     save_parquet(rows, output_path)

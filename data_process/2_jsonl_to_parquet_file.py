@@ -145,7 +145,7 @@ def main():
             )
             no_watermark_input_prompt = tokenizer.apply_chat_template(
                 conversation= [
-                    {"role": "system", "content": no_watermark_system_prompt},
+                    # {"role": "system", "content": no_watermark_system_prompt},
                     {"role": "user", "content": prefix},
                 ],
                 tokenize=False,

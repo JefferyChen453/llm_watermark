@@ -94,8 +94,7 @@ def main(args):
         )
 
     for batch in tqdm(ds.iter(batch_size=args.batch_size), desc="Generating"):
-        input_prompt = batch["prefix"]
-        # input_prompt = batch["input_prompt"]
+        input_prompt = batch["input_prompt"]
         indices = batch["idx"]
         batch_seeds = [seed_list[idx % len(seed_list)] for idx in indices]
 

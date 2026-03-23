@@ -4,7 +4,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import sys
 import string
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoConfig
 
 _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
@@ -17,18 +17,19 @@ from filters import ngram_repeat_ratio, filter_punctuation_ratio
 #     "/home/tianyichen/llm_watermark/outputs/syn_data/OpenGen/Qwen-Qwen3-14B_strength_2.0_frac_0.0_len_500_num_7211_only_English.jsonl",
 # ]
 positive_data_files = [
-    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_frac_0.1_len_600_num_11578_vllm_only_English.jsonl",
-    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_frac_0.15_len_600_num_11578_vllm_only_English.jsonl",
-    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_frac_0.2_len_600_num_11578_vllm_only_English.jsonl",
-    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_frac_0.25_len_600_num_11578_vllm_only_English.jsonl",
-    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_frac_0.3_len_600_num_11578_vllm_only_English.jsonl",
+    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_frac_0.1_len_600_num_11578_vllm_only_English.jsonl",
+    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_frac_0.15_len_600_num_11578_vllm_only_English.jsonl",
+    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_frac_0.2_len_600_num_11578_vllm_only_English.jsonl",
+    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_frac_0.25_len_600_num_11578_vllm_only_English.jsonl",
+    "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_frac_0.3_len_600_num_11578_vllm_only_English.jsonl",
 ]
 # negative_tau_list = [5.0]
-positive_tau_list = [10.0,
-9.5,
-9.5,
-8.5,
-8.5,
+positive_tau_list = [
+6.0,
+6.0,
+6.0,
+6.0,
+6.0,
 ]
 fraction_list = [0.1, 0.15, 0.2, 0.25, 0.3]
 DEFAULT_WM_KEY = 0
@@ -37,27 +38,32 @@ NUM_WORKERS = 64
 
 # ── worker globals (initialised once per subprocess) ───────────────────
 _w_tokenizer = None
+_w_model_config = None
+_w_detector_cache = None  # global detector cache, keyed by (fraction, seed)
 
 def _init_worker(model_name: str):
-    global _w_tokenizer
+    global _w_tokenizer, _w_model_config, _w_detector_cache
     _w_tokenizer = AutoTokenizer.from_pretrained(model_name)
     _w_tokenizer.padding_side = "left"
-
+    _w_model_config = AutoConfig.from_pretrained(model_name)
+    _w_detector_cache = {}
 
 def _process_positive_chunk(chunk, fraction, tau):
     """Process a chunk of positive samples in a worker. Returns (filtered, n_short)."""
+    global _w_detector_cache
     tokenizer = _w_tokenizer
-    detector_cache = {}
+    model_config = _w_model_config
+    detector_cache = _w_detector_cache
     filtered = []
     dropped = []
     n_short = 0
     for d in chunk:
-        if filter_punctuation_ratio(d['gen_completion'], threshold=0.30):
-            # print(f"\nFilter out because of punctuation ratio:\n\n{d['gen_completion']}")
-            # print("\n", "="*100)
+        if filter_punctuation_ratio(d['gen_completion'], threshold=0.45):
+            print(f"\nFilter out because of punctuation ratio:\n\n{d['gen_completion']}")
+            print("\n", "="*100)
             dropped.append(d)
             continue
-        if ngram_repeat_ratio(d['gen_completion'], n=5, threshold=0.28):
+        if ngram_repeat_ratio(d['gen_completion'], n=5, threshold=0.40):
             # print(f"\nFilter out because of ngram repeat ratio:\n\n{d['gen_completion']}")
             # print("\n", "="*100)
             dropped.append(d)
@@ -73,7 +79,7 @@ def _process_positive_chunk(chunk, fraction, tau):
                 fraction=fraction,
                 strength=2.0,
                 vocab_size=tokenizer.vocab_size,
-                model_emb_length=tokenizer.vocab_size,
+                model_emb_length=model_config.vocab_size,
                 watermark_key=seed,
                 only_English=True,
                 tokenizer=tokenizer,
@@ -154,9 +160,9 @@ if __name__ == "__main__":
     all_filtered_data = filtered_positive_data
     # all_filtered_data = filtered_positive_data + filtered_negative_data
 
-    save_path = f"/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_filtered_data_pos_{len(filtered_positive_data)}.jsonl"
+    save_path = f"/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_filtered_data_pos_{len(filtered_positive_data)}.jsonl"
     print(f"Filtered data saved to: {save_path}")
     save_jsonl(all_filtered_data, save_path)
-    save_path = f"/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_dropped_data_pos_{len(dropped_positive_data)}.jsonl"
+    save_path = f"/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_dropped_data_pos_{len(dropped_positive_data)}.jsonl"
     print(f"Dropped data saved to: {save_path}")
     save_jsonl(dropped_positive_data, save_path)

@@ -59,6 +59,6 @@ def filter_by_prefix_sample(input_path: str, output_dir: str, seed: int = 42):
 
 
 if __name__ == "__main__":
-    input_path = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0/Qwen-Qwen3-14B_strength_4.0_filtered_data_pos_6975.jsonl"
-    output_dir = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa/strength_4.0"
+    input_path = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_filtered_data_pos_6120.jsonl"
+    output_dir = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0"
     filter_by_prefix_sample(input_path, output_dir)
