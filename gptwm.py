@@ -15,7 +15,7 @@ def _get_english_token_ids(tokenizer, vocab_size: int):
         vocab = tokenizer.get_vocab()
         english_token_ids = [
             tid for tok, tid in vocab.items()
-            if GPTWatermarkBase.is_english_token(tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
+            if GPTWatermarkBase.is_english_token_v2(tokenizer.convert_tokens_to_string([tok])) and tid < vocab_size
         ]
         _english_token_ids_cache[cache_key] = sorted(english_token_ids)
     return _english_token_ids_cache[cache_key]
@@ -73,6 +73,13 @@ class GPTWatermarkBase:
     def is_english_token(token: str) -> bool:
         """Check if a token is English (ASCII characters only, excluding first character)."""
         return all(ord(c) < 128 for c in token)
+
+    @staticmethod
+    def is_english_token_v2(token: str) -> bool:
+        return all(ord(c) < 128 for c in token) and any(c.isalpha() for c in token)
+
+    # def is_english_token_v2(token: str) -> bool:
+        # return all(ord(c) < 128 and c.isalpha() for c in token)
 
     def __init__(
         self, 
