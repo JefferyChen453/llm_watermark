@@ -64,6 +64,7 @@ class GPTWatermarkBase:
         fraction: The fraction of the distribution to be green-listed.
         strength: The strength of the green-listing. Higher values result in higher logit scores for green-listed tokens.
         vocab_size: The size of the vocabulary.
+        model_emb_length: The length of the model embedding.
         watermark_key: The random seed for the green-listing.
         only_English: If True, only English tokens will be considered for green-listing.
         tokenizer: The tokenizer instance (required if only_English=True).
@@ -186,6 +187,7 @@ class GPTWatermarkDetector(GPTWatermarkBase):
         fraction: The fraction of the distribution to be green-listed.
         strength: The strength of the green-listing. Higher values result in higher logit scores for green-listed tokens.
         vocab_size: The size of the vocabulary.
+        model_emb_length: The length of the model embedding.
         watermark_key: The random seed for the green-listing.
         only_English: If True, only English tokens will be considered for green-listing.
         tokenizer: The tokenizer instance (required if only_English=True).
@@ -231,3 +233,34 @@ class GPTWatermarkDetector(GPTWatermarkBase):
         z_score = self.unidetect(sequence)
         tau = self._compute_tau(len(list(set(sequence))), vocab_size, alpha)
         return z_score > tau, z_score
+
+if __name__ == "__main__":
+    from transformers import AutoTokenizer
+    from transformers import AutoConfig
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-14B")
+    model_config = AutoConfig.from_pretrained("Qwen/Qwen3-14B")
+    # english_token_ids = _get_english_token_ids(tokenizer, tokenizer.vocab_size)
+    # token_str_list = [tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens([token_id])) for token_id in english_token_ids]
+    # print("||".join(token_str_list))
+    # print("English token ids number:", len(english_token_ids))
+    detector = GPTWatermarkDetector(
+        fraction=0.25,
+        strength=3.0,
+        vocab_size=tokenizer.vocab_size,
+        model_emb_length=model_config.vocab_size,
+        watermark_key=0,
+        only_English=True,
+        tokenizer=tokenizer,
+    )
+    # import json
+    # data = [json.loads(line) for line in open("/home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/validation_177.jsonl")]
+    # gold_completions = [item["gold_completion"] for item in data]
+    # z_scores = []
+    # for gold_completion in gold_completions:
+    #     tokens = tokenizer(gold_completion, add_special_tokens=False)["input_ids"]
+    #     z_scores.append(detector.unidetect(tokens))
+    # print(sum(z_scores)/len(z_scores))
+    text = """Yes, there is historical evidence that the Soviet authorities took note of George Orwell's novels *Animal Farm and 1 Nineteen Eighty-Four during the Cold War era and reacted to them in various ways that reflected their ideological concerns and the Cold War context in which they appeared after the Second World War and during the period of the Cold War that followed it from the late forties through the early fifties and sixties and even beyond that period in the late Soviet era and into the late Soviet period in the eighties and early nineties before the dissolution of the Soviet state and the emergence of the successor states in the early nineties and beyond during the late period of the late twentieth century and early twenty-first century in the wake of the break-up of the Soviet Union and the dissolution of the Soviet Union and the subsequent period of its replacement by the successor states and the dissolution of the Soviet Union itself and the political shifts that followed during the late twentieth century and early twenty-first century in the aftermath of the dissolution of the Soviet state in the early years of the late twentieth century in the early years of the Cold War and beyond that period of the late twentieth century and the early period of the twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state in the late twentieth and early twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state during the early period of the late twentieth century and beyond into the late twentieth century and the early years of the early twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state during the early years of the late twentieth century and beyond during the late period of the twentieth century and the early period of the early twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state in the late twentieth century and the early years of the early twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state during the late twentieth century and the early twenty-first century and the emergence of the successor states to the Soviet Union and the dissolution of the Soviet state in the late twentieth century and the early period of the early twenty-first century and the emergence of the successor states to the Soviet state in the late twentieth and early twenty-first centuries and the dissolution of the Soviet Union in the late twentieth and early twenty-first century and the emergence of the successor states to the Soviet state in the early twentieth and early twenty-first century and the emergence of the successor states to the Soviet state during the late twentieth century and the early years of the early twentieth and early twenty-first century and the dissolution of the Soviet state in the early years of the early twenty-first century and the emergence of the successor states to the Soviet state during the late twentieth and early twenty-first century and the emergence of the successor states to the Soviet state in the late twentieth and early twenty-first century and the"""
+    tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
+    print(detector.unidetect(tokens))
+    

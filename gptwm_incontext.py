@@ -21,8 +21,13 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
         if not hasattr(self, 'tokenizer') or self.tokenizer is None:
             self.tokenizer = kwargs['tokenizer']
 
-    def get_green_token_string(self) -> str:
-        """Return pipe-separated string of green tokens for use in system prompts."""
+    def get_green_token_string(self, shuffle: bool = True) -> str:
+        """Return pipe-separated string of green tokens for use in system prompts.
+
+        Args:
+            shuffle: If True, randomize token order (for training diversity).
+                     Set to False for val/test to enable vLLM prefix caching.
+        """
         sep = "|"
         green_token_ids = torch.nonzero(self.green_list_mask, as_tuple=True)[0].tolist()
         green_tokens = self.tokenizer.convert_ids_to_tokens(green_token_ids)
@@ -31,6 +36,7 @@ class InContextWatermarkGenerator(GPTWatermarkBase):
             s = self.tokenizer.convert_tokens_to_string([token])
             if s:
                 green_token_list.append(s)
-        random.shuffle(green_token_list)
-        
+        if shuffle:
+            random.shuffle(green_token_list)
+
         return sep.join(green_token_list)
