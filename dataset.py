@@ -31,10 +31,13 @@ def apply_chat_template(tokenizer, system_prompt: str, user_prompt: str) -> str:
     Falls back to a plain-text format when no chat template is available.
     """
     if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        if system_prompt:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+        else:
+            messages = [{"role": "user", "content": user_prompt}]
         return tokenizer.apply_chat_template(
             messages,
             tokenize=False,

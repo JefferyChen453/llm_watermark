@@ -57,21 +57,13 @@ def get_incontext_system_prompt(dataset_type: str, green_token_string: str = "")
 
 register_prompt(
     "lfqa",
-    base="""\
-### Command:
-You are given a user query. Generate a response that is:
-1. Clear & Coherent: Easy to follow and logically organized.
-2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
-3. Contextually Relevant: Directly addresses the user's intent and context.""",
+    base="""""",
     incontext="""\
-### Green Token List: {green_tokens}
+<green>
+{green_tokens}
+</green>
 
-### Command:
-You are given a predefined Green Token List, separated by "|". For each user query, generate a response that is:
-1. Clear & Coherent: Easy to follow and logically organized.
-2. Accurate & Concrete: Provides precise facts, examples, or steps. Avoid vague or overly verbose expressions.
-3. Contextually Relevant: Directly addresses the user's intent and context.
-4. "Green Token" Enriched (Most Important!): Try your best to seamlessly incorporate as many tokens from the Green Token List as possible — without compromising text quality. Do not claim what green tokens you used explicitly.""",
+Respond to the user query. Seamlessly incorporate as many tokens from <green> as possible without compromising text quality.""",
 )
 
 register_prompt(
