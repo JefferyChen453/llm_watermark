@@ -44,7 +44,7 @@ def filter_by_prefix_sample(input_path: str, output_dir: str, seed: int = 42):
     n_pos, n_neg = len(positive), len(negative)
 
     # 输出文件命名
-    base_name = "Qwen-Qwen3-14B_strength_4.0_filtered"
+    base_name = "Qwen-Qwen3-14B_strength_3.0_filtered"
     output_name = f"{base_name}_pos_{n_pos}_neg_{n_neg}.jsonl"
     output_path = f"{output_dir.rstrip('/')}/{output_name}"
 
@@ -59,6 +59,6 @@ def filter_by_prefix_sample(input_path: str, output_dir: str, seed: int = 42):
 
 
 if __name__ == "__main__":
-    input_path = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0/Qwen-Qwen3-14B_strength_2.0_filtered_data_pos_6120.jsonl"
-    output_dir = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_2.0"
+    input_path = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt_v2/strength_3.0/Qwen-Qwen3-14B_strength_3.0_filtered_data_pos_13998.jsonl"
+    output_dir = "/home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt_v2/strength_3.0"
     filter_by_prefix_sample(input_path, output_dir)

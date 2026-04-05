@@ -42,11 +42,11 @@ def save_parquet(rows, path):
 
 def main():
     parser = argparse.ArgumentParser(description="LFQA JSON(L) -> Parquet with in-context system prompt (seed=0).")
-    parser.add_argument("--input", default="/home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/validation_sample_64.json", help="Input JSON or JSONL path.")
-    parser.add_argument("--output", default=None, help="Output Parquet path (default: input with .parquet).")
+    parser.add_argument("--input", default="/home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/validation_177.json", help="Input JSON or JSONL path.")
+    parser.add_argument("--output", default="/home/tianyichen/llm_watermark/verl/data/sft_modified_loss/vblagoje_lfqa/validation_pos177_neg177_seed0_frac0.25_new_sys_prompt.parquet", help="Output Parquet path (default: input with .parquet).")
     parser.add_argument("--model_name", default="Qwen/Qwen3-14B", help="Model for tokenizer/config.")
-    parser.add_argument("--seed", type=int, default=1, help="Watermark key (default 0).")
-    parser.add_argument("--fraction", type=float, default=0.2, help="Green-list fraction (default 0.5).")
+    parser.add_argument("--seed", type=int, default=0, help="Watermark key (default 0).")
+    parser.add_argument("--fraction", type=float, default=0.25, help="Green-list fraction (default 0.5).")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -64,9 +64,6 @@ def main():
     )
     green_token_string = generator.get_green_token_string()
     system_prompt = get_incontext_system_prompt("lfqa", green_token_string)
-    # with open("x.text", "r", encoding="utf-8") as f:
-    #     content = f.read().strip()
-    # system_prompt = content
 
     rows = []
     with open(input_path, "r", encoding="utf-8") as f:

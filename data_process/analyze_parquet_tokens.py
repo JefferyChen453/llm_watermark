@@ -15,7 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--parquet_path",
-        default="/home/tianyichen/llm_watermark/verl/data/sft_modified_loss/vblagoje_lfqa/validation_177.parquet",
+        default="/home/tianyichen/llm_watermark/verl/data/sft_modified_loss/vblagoje_lfqa/Qwen-Qwen3-14B_strength_2.0_filtered_pos_3583_neg_0.parquet",
         help="Path to parquet file",
     )
     parser.add_argument(
@@ -26,7 +26,7 @@ def main():
     parser.add_argument(
         "--sample",
         type=int,
-        default=64,
+        default=None,
         help="Only analyze first N samples (default: all)",
     )
     args = parser.parse_args()
