@@ -1,32 +1,31 @@
 export VLLM_USE_TORCH_COMPILE=0
 # Fractions=(0.1 0.2 0.3)
-Fractions=(0.0 0.1 0.2 0.3 0.4)
-# sleep 2 hours
-sleep 7200
-for f in "${Fractions[@]}"; do
+FRACTIONS=(0.0 0.1 0.15 0.2 0.25 0.3 0.35 0.4)
 
-    uv run run_generate_incontext_vllm.py \
-        --model_name /home/tianyichen/llm_watermark/verl/checkpoints/watermark-sft/wmkey+shuffle_combined/global_step_217/hf_model \
-        --max_new_tokens 500 \
-        --yarn \
-        --max_model_len 131072 \
-        --fraction "$f" \
-        --wm_key 10000 \
-        --only_English \
-        --dataset_type lfqa \
-        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/LFQA/inputs.jsonl \
-        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/wmkey+shuffle_combined_global_step_217_LFQA_shuffle
+CKPT_ROOT_DIR=/home/tianyichen/llm_watermark/verl/checkpoints
+STEPS=(741 1482)
 
+for f in "${FRACTIONS[@]}"; do
+    # uv run run_generate_incontext_vllm.py \
+    #     --model_name Qwen/Qwen3-14B \
+    #     --yarn \
+    #     --max_model_len 131072 \
+    #     --fraction "$f" \
+    #     --seed_num 1 \
+    #     --only_English \
+    #     --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+    #     --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/prompt_v2/Qwen-Qwen3-14B
+    
+    for step in "${STEPS[@]}"; do
 
-    uv run run_generate_incontext_vllm.py \
-        --model_name /home/tianyichen/llm_watermark/verl/checkpoints/watermark-sft/wmkey+shuffle_combined/global_step_217/hf_model \
-        --max_new_tokens 500 \
-        --yarn \
-        --max_model_len 131072 \
-        --fraction "$f" \
-        --wm_key 10000 \
-        --only_English \
-        --dataset_type opengen \
-        --prompt_file /home/tianyichen/llm_watermark/UnigramWatermark/data/OpenGen/inputs.jsonl \
-        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/wmkey+shuffle_combined_global_step_217_OpenGen_shuffle
+        uv run run_generate_incontext_vllm.py \
+            --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527/global_step_${step}/hf_model \
+            --yarn \
+            --max_model_len 131072 \
+            --fraction "$f" \
+            --seed_num 1 \
+            --only_English \
+            --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+            --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/prompt_v2_new/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527_global_step_${step}
+    done
 done

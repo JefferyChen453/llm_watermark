@@ -18,7 +18,7 @@ export HF_HUB_OFFLINE=1
 # done
 
 FRACTIONS=(0.1 0.15 0.2 0.25 0.3)
-STRENGTHS=(2.0)
+STRENGTHS=(3.0)
 for s in "${STRENGTHS[@]}"; do
     for f in "${FRACTIONS[@]}"; do
         # uv run run_detect.py \
@@ -33,8 +33,8 @@ for s in "${STRENGTHS[@]}"; do
         uv run run_detect.py \
             --model_name Qwen/Qwen3-14B \
             --fraction "$f" \
-            --input_file /home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_"$s"/Qwen-Qwen3-14B_strength_"$s"_frac_"$f"_len_600_num_11578_vllm_only_English.jsonl \
-            --workers 16 \
+            --input_file /home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt_v2/strength_"$s"/Qwen-Qwen3-14B_strength_"$s"_frac_"$f"_len_600_num_11578_vllm_only_English.jsonl \
+            --workers 32 \
             --only_English \
             --combine_fraction
 

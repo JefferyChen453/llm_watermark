@@ -34,17 +34,17 @@
 # sleep 4000
 
 FRACTIONS=(0.1 0.15 0.2 0.25 0.3)
-STRENGTHS=(2.0)
+STRENGTHS=(3.0)
 for s in "${STRENGTHS[@]}"; do
     for f in "${FRACTIONS[@]}"; do
         uv run run_generate_syn_vllm.py \
             --model_name Qwen/Qwen3-14B \
-            --batch_size 512 \
+            --batch_size 1024 \
             --fraction "$f" \
             --strength "$s" \
             --seed_num 500 \
             --only_English \
             --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/train_11578.json \
-            --output_dir /home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt/strength_${s}
+            --output_dir /home/tianyichen/llm_watermark/outputs/syn_data_vblagoje_lfqa_no_system_prompt_v2/strength_${s}
     done
 done
