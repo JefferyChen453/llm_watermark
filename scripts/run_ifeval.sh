@@ -1,4 +1,4 @@
-uv pip install antlr4-python3-runtime==4.9.3
+uv pip install --upgrade antlr4-python3-runtime
 
 # lighteval vllm \
 #     "model_name=Qwen/Qwen3-14B,dtype=bfloat16,gpu_memory_utilization=0.9" \
@@ -18,4 +18,4 @@ lighteval vllm \
     --save-details
 
 
-uv pip install --upgrade antlr4-python3-runtime
+uv pip install antlr4-python3-runtime==4.9.3
