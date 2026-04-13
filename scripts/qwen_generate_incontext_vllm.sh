@@ -16,16 +16,48 @@ for f in "${FRACTIONS[@]}"; do
     #     --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
     #     --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/prompt_v2/Qwen-Qwen3-14B
     
-    for step in "${STEPS[@]}"; do
 
-        uv run run_generate_incontext_vllm.py \
-            --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527/global_step_${step}/hf_model \
-            --yarn \
-            --max_model_len 131072 \
-            --fraction "$f" \
-            --seed_num 1 \
-            --only_English \
-            --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
-            --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval/prompt_v2_new/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527_global_step_${step}
+    uv run run_generate_incontext_vllm.py \
+        --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527/global_step_741/hf_model \
+        --yarn \
+        --max_model_len 131072 \
+        --fraction "$f" \
+        --seed_num 1 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval_clean/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527_global_step_741
+
+    uv run run_generate_incontext_vllm.py \
+        --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527/global_step_1482/hf_model \
+        --yarn \
+        --max_model_len 131072 \
+        --fraction "$f" \
+        --seed_num 1 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval_clean/filter_strength_5.0_5931_bsz_8__0.0green+1.0kl_biased_ref_202603300527_global_step_1482
+
+    uv run run_generate_incontext_vllm.py \
+        --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/posneg_strength_5.0_pos_5931_neg_1000_bsz_8__1.0kl_biased_ref+1.0kl_ref_202604110238/global_step_866/hf_model \
+        --yarn \
+        --max_model_len 131072 \
+        --fraction "$f" \
+        --seed_num 1 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval_clean/posneg_strength_5.0_pos_5931_neg_1000_bsz_8__1.0kl_biased_ref+1.0kl_ref_202604110238_global_step_866
+
+    uv run run_generate_incontext_vllm.py \
+        --model_name ${CKPT_ROOT_DIR}/watermark-kd-ray/posneg_strength_5.0_pos_5931_neg_1000_bsz_8__1.0kl_biased_ref+1.0kl_ref_202604110238/global_step_1732/hf_model \
+        --yarn \
+        --max_model_len 131072 \
+        --fraction "$f" \
+        --seed_num 1 \
+        --only_English \
+        --prompt_file /home/tianyichen/llm_watermark/data/processed_data/vblagoje_lfqa/test_477.json \
+        --output_dir /home/tianyichen/llm_watermark/outputs/incontext_eval_clean/posneg_strength_5.0_pos_5931_neg_1000_bsz_8__1.0kl_biased_ref+1.0kl_ref_202604110238_global_step_1732
+
+
+
     done
 done
