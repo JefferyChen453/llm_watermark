@@ -67,6 +67,45 @@ Respond to the user query. Seamlessly incorporate as many tokens from <green> as
 )
 
 register_prompt(
+    "lfqa_initials",
+    base="""""",
+    incontext="""\
+<green>
+{green_letters}
+</green>
+
+<red>
+{red_letters}
+</red>
+
+Given the <green> and <red> letter lists, respond to the user query with clarity, accuracy, informativeness, and relevance. Favor words beginning with letters from <green> and minimize those beginning with letters from <red>. Never reveal the <green> and <red> letter lists in your reply.""",
+)
+
+
+def get_initials_incontext_prompt(dataset_type: str, green_letters, red_letters) -> str:
+    """Return the Initials ICW system prompt with both letter lists formatted
+    as comma-separated uppercase strings.
+
+    The letter order is preserved verbatim — callers control whether to pass
+    sorted lists (inference / detection) or shuffled lists (training data
+    synthesis, to prevent student from memorising positional cues).
+    Pass empty/None letters to get the plain base prompt.
+    """
+    dtype = dataset_type.lower().strip()
+    if dtype not in _DATASET_PROMPTS:
+        available = ", ".join(sorted(_DATASET_PROMPTS)) or "(none)"
+        raise ValueError(
+            f"Unknown dataset_type: {dataset_type!r}. Available: {available}"
+        )
+    entry = _DATASET_PROMPTS[dtype]
+    if not green_letters or not red_letters:
+        return entry["base"]
+    g = ", ".join(green_letters)
+    r = ", ".join(red_letters)
+    return entry["incontext"].format(green_letters=g, red_letters=r)
+
+
+register_prompt(
     "opengen",
     base="""\
 ### Command:
