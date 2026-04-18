@@ -146,6 +146,7 @@ def main(args):
         temperature=1.0,
         top_k=args.top_k if args.top_k is not None else -1,
         top_p=args.top_p,
+        n=args.n_candidates,
     )
 
     # ---------- Generation ----------
@@ -168,20 +169,25 @@ def main(args):
             ]
             outs = llm.generate(batch_in, sp_list)
             for t, prompt_icw, prompt_clean, out in zip(batch_tasks, batch_in, batch_clean, outs):
-                rec = {
-                    "prefix": t["prefix"],
-                    "gold_completion": t["gold_completion"],
-                    "prompt": prompt_icw,
-                    "prompt_no_incontext_wm": prompt_clean,
-                    "response": out.outputs[0].text,
-                    "seed": t["wm_seed"],
-                    "fraction": t["gamma"],  # stored as fraction column for recipe compat
-                    "green_shuffled": t["green_shuffled"],
-                    "red_shuffled": t["red_shuffled"],
-                    "dataset_type": args.dataset_type,
-                }
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                written += 1
+                # out.outputs is a list of length n_candidates; emit one record per candidate.
+                # Downstream `pick_best_candidate_initials.py` groups by (prefix, seed) and
+                # keeps the highest-z candidate that also passes quality + regex rules.
+                for ci, completion in enumerate(out.outputs):
+                    rec = {
+                        "prefix": t["prefix"],
+                        "gold_completion": t["gold_completion"],
+                        "prompt": prompt_icw,
+                        "prompt_no_incontext_wm": prompt_clean,
+                        "response": completion.text,
+                        "seed": t["wm_seed"],
+                        "fraction": t["gamma"],  # stored as fraction column for recipe compat
+                        "green_shuffled": t["green_shuffled"],
+                        "red_shuffled": t["red_shuffled"],
+                        "dataset_type": args.dataset_type,
+                        "candidate_idx": ci,
+                    }
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    written += 1
             f.flush()
 
     print(f"Wrote {written} records to {out_path}")
@@ -212,5 +218,8 @@ if __name__ == "__main__":
     p.add_argument("--max_model_len", type=int, default=4096)
     p.add_argument("--batch_size", type=int, default=64)
     p.add_argument("--tensor_parallel_size", type=int, default=8)
+    p.add_argument("--n_candidates", type=int, default=1,
+                   help="vLLM SamplingParams.n — generate N candidates per prompt; "
+                        "downstream pick_best_candidate_initials selects the best one.")
     args = p.parse_args()
     main(args)

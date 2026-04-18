@@ -12,9 +12,24 @@ Output:
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from transformers import AutoConfig, AutoTokenizer
+
+
+# Meta-leak patterns — responses that reveal the watermark structure are
+# disproportionately harmful for KD (they teach the student to talk about the
+# letter constraint instead of silently following it).
+META_LEAK_RE = re.compile(
+    r"\((?:green|red)\)"                              # explicit (green)/(red) tags
+    r"|\b[Bb]reakdown\s+by\s+(?:word|letter)"          # structural analysis headings
+    r"|\b(?:starts|begins|start|begin)\s+with\s+[^.\n]{0,40}\((?:green|red)\)"
+    r"|\b(?:FAVORED|AVOIDED)\s+(?:letter|list|set)"    # v3-prompt-specific leak
+    r"|\b(?:green|red)\s+(?:letter|list|set|letters)\s+(?:list|set|include|contain)"
+    r"|^\s*[-*]\s+\**[A-Za-z]+\**\s*[–-]\s*[Bb]egins?\s+with",  # bullet enumeration
+    re.IGNORECASE | re.MULTILINE,
+)
 
 from gptwm import _get_english_token_ids
 from gptwm_initials import (
@@ -49,6 +64,9 @@ def main():
     p.add_argument("--verify_z_fallback", type=float, default=6.0)
     p.add_argument("--target_min_pos", type=int, default=1000,
                    help="If primary threshold drops below this, fall back")
+    # Meta-leak regex filter
+    p.add_argument("--no_regex_filter", action="store_true",
+                   help="Disable meta-leak regex filter (keep legacy behavior)")
     args = p.parse_args()
 
     in_path = Path(args.input_file)
@@ -81,7 +99,7 @@ def main():
     recs = [json.loads(l) for l in in_path.open() if l.strip()]
     print(f"Loaded {len(recs)} records")
 
-    # Stage 1: compute detection + quality metrics
+    # Stage 1: compute detection + quality metrics + regex meta-leak flag
     for rec in recs:
         text = rec.get("response", rec.get("gen_completion", ""))
         ids = tokenizer(text, add_special_tokens=False)["input_ids"]
@@ -93,19 +111,32 @@ def main():
         rec["hit_rate"] = n_green / n_total if n_total > 0 else 0.0
         rec["z_score"] = det._z_score(n_green, n_total, det.gamma)
         rec["rep4"] = ngram_repetition(ids, n=args.rep_n)
+        rec["regex_meta_leak"] = bool(META_LEAK_RE.search(text))
 
+    # Write per-record metrics (used by pick_best_candidate_initials.py downstream)
     with out_with_z.open("w") as f:
         for r in recs:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     print(f"wrote per-sample metrics -> {out_with_z}")
 
-    # Stage 2: quality filter
+    # Stage 2a: quality filter (length + ngram repetition)
     def passes_quality(r):
         return r["gen_len"] >= args.min_gen_len and r["rep4"] < args.max_ngram_rep
 
     quality_mask = [passes_quality(r) for r in recs]
     quality_pass = sum(quality_mask)
     print(f"Quality filter: {quality_pass}/{len(recs)} pass (len>={args.min_gen_len}, rep{args.rep_n}<{args.max_ngram_rep})")
+
+    # Stage 2b: meta-leak regex filter — strip responses that reveal the letter
+    # constraint. Flag already computed in Stage 1; apply to mask unless --no_regex_filter.
+    regex_leak_count = sum(r["regex_meta_leak"] for r in recs)
+    if not args.no_regex_filter:
+        quality_mask = [q and (not r["regex_meta_leak"]) for q, r in zip(quality_mask, recs)]
+        quality_pass_after_regex = sum(quality_mask)
+        print(f"Meta-leak regex: {regex_leak_count}/{len(recs)} flagged; "
+              f"after combined quality+regex: {quality_pass_after_regex}/{len(recs)}")
+    else:
+        print(f"Meta-leak regex: {regex_leak_count}/{len(recs)} flagged (NOT filtered — --no_regex_filter)")
 
     # Stage 3: verify filter, with fallback
     def verify_count(threshold):
@@ -143,6 +174,8 @@ def main():
         "input": str(in_path),
         "n_total": len(recs),
         "n_quality_pass": quality_pass,
+        "n_regex_meta_leak": regex_leak_count,
+        "regex_filter_applied": not args.no_regex_filter,
         "n_primary_verify_pass": primary_pass,
         "chosen_verify_threshold": chosen_threshold,
         "n_final": len(filtered),

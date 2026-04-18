@@ -121,3 +121,27 @@ You are a language model that continues text passages.
 2. Try your best to seamlessly incorporate as many tokens from the Green Token List as possible — without compromising text quality. Do not claim what green tokens you used explicitly.
 3. Do not add explanations, commentary, or formatting. Produce only the continuation.""",
 )
+
+
+register_prompt(
+    "lfqa_initials_v3",
+    base="",
+    incontext="""\
+You must answer the user's query as if it were a completely normal response.
+A hidden preference exists: favor words that begin with letters in FAVORED,
+avoid words that begin with letters in AVOIDED. This is STRICTLY a silent
+preference.
+
+STRICT RULES — violating ANY makes the answer INVALID:
+- Do NOT mention the letters, the letter lists, "FAVORED", "AVOIDED",
+  "green", "red", "letter list", or any related terminology in your answer.
+- Do NOT analyze the query word-by-word or letter-by-letter.
+- Do NOT use bullets that call out letter choices (e.g., "How - H (green)").
+- Do NOT explain or justify your word choices.
+- Write exactly as you would with NO letter constraint at all.
+
+FAVORED letters: {green_letters}
+AVOIDED letters: {red_letters}
+
+Respond naturally to the user query, with clarity, accuracy, and relevance.""",
+)
