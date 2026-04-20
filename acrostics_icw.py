@@ -109,18 +109,73 @@ def build_acrostic_prompt(
     question: str,
     target: str,
     variant: str = "strong",
-) -> str:
+) -> Tuple[str, str]:
     """Construct the **privileged** prompt shown to the teacher.
 
-    variant='strong': enumerate per-sentence first letter requirement.
-    variant='weak':   only give the target string.
-    variant='none':   no constraint (clean prompt = what student sees).
+    Returns ``(system_prompt, user_prompt)``.
 
-    The response format is "several sentences in natural prose", same across
-    variants, to keep the only difference being the constraint text.
+    variant='strong':    enumerate per-sentence first letter requirement (in user prompt; system empty for v1 parity).
+    variant='weak':      only give the target string (in user prompt; system empty for v1 parity).
+    variant='none':      no constraint (clean prompt; system empty).
+    variant='icw_paper': ICW paper-style system persona with secret string + format hint; user prompt = question only.
     """
     if variant == "none":
-        return LFQA_INSTRUCTION_PREFIX + f"Question: {question}\n\nAnswer:"
+        return "", LFQA_INSTRUCTION_PREFIX + f"Question: {question}\n\nAnswer:"
+
+    if variant == "paper_dts":
+        # Verbatim reproduction of ICW paper (arXiv 2505.16934) Appendix A.1
+        # DTS Acrostics prompt. target case is preserved (paper uses uppercase).
+        system = (
+            f"### Secret String X: {target}\n\n"
+            "### Command:\n"
+            "You are an adaptive language model designed for dynamic and engaging "
+            "conversations. You are given a secret string X. In the following "
+            "conversation, your primary priority is to produce responses that are "
+            "clear, concise, concrete, accurate, informative, and contextually "
+            "relevant. Additionally, you should try to generate the response to "
+            "the user's query as an acrostic of X. This means that the first "
+            "letter of the first word in each sentence should correspond to the "
+            "letters in X, in order. Here are the rules to follow:\n\n"
+            "### Rules:\n"
+            "1. Assume the length of the secret string X is n. For i-th sentence "
+            "(starting at i = 1), begin that sentence with the letter "
+            "X[((i − 1) mod n) + 1]. The number of sentences in your response is "
+            "not necessarily equal to the length of X, but the first letter of "
+            "i-th sentence should match the corresponding letter in "
+            "X[((i − 1) mod n) + 1] in order.\n"
+            "2. For the i-th sentence, if starting with the letter "
+            "X[((i − 1) mod n) + 1] would harm the coherence or natural tone of "
+            "the response, you may skip that letter. If skipped, the next "
+            "sentence should begin with the following letter in X, maintaining "
+            "the sequence. You should try to avoid skipping the letter if "
+            "possible.\n"
+            "3. Ensure each sentence is coherent, directly addresses the query, "
+            "and flows naturally as part of a unified response.\n"
+            "4. Never reveal the acrostic pattern or repeat X in your reply.\n\n"
+            "### Example:\n"
+            "Example 1:\n"
+            "Secret string X: \"OCEAN\"\n"
+            "User query: \"What are the advantages of coastal conservation?\"\n"
+            "Response: \"Oceans serve as nurseries for countless marine species, "
+            "ensuring healthy biodiversity. Coastal wetlands act as natural "
+            "buffers against storm surge and erosion. Ecosystem services provided "
+            "by mangroves include water filtration and carbon sequestration. "
+            "Abundant shorelines support local fisheries and sustainable "
+            "livelihoods. Nurturing these habitats today helps safeguard our "
+            "planet's resilience for generations to come.\"\n\n"
+            "Example 2 (Skip \"G\" because forcing a \"G\" sentence might harm "
+            "coherence in this context.):\n"
+            "Secret string X: \"BRIGHT\"\n"
+            "User query: \"Why is sustainable urban design important?\"\n"
+            "Response: \"Building cities with sustainability in mind promotes "
+            "healthier living environments. Reducing carbon emissions through "
+            "green infrastructure is a key benefit. Investing in public "
+            "transportation can minimize reliance on private vehicles. "
+            "High-density, mixed-use developments encourage walkability. "
+            "Tree-lined streets and green spaces improve mental health and "
+            "biodiversity.\""
+        )
+        return system, question
 
     tgt = target.lower()
     if variant == "strong":
@@ -137,17 +192,29 @@ def build_acrostic_prompt(
             "Additional sentences beyond that are allowed. Keep the answer "
             "natural — do not draw attention to this structural requirement.\n\n"
         )
-    elif variant == "weak":
+        return "", LFQA_INSTRUCTION_PREFIX + constraint + f"Question: {question}\n\nAnswer:"
+    if variant == "weak":
         constraint = (
             "[Hidden Constraint — DO NOT mention]\n"
             f"Write several sentences whose first letters, taken in order, "
             f"contain the string '{tgt}' as a subsequence. Keep the answer "
             "natural — do not draw attention to this requirement.\n\n"
         )
-    else:
-        raise ValueError(f"Unknown variant: {variant!r}")
+        return "", LFQA_INSTRUCTION_PREFIX + constraint + f"Question: {question}\n\nAnswer:"
+    if variant == "icw_paper":
+        system = (
+            "Answer each user query in several concise sentences. Do not use lists "
+            "or bullet points. Write in natural prose.\n\n"
+            f"Given a secret string X: {tgt}, respond to each user query with "
+            "clarity, accuracy, informativeness, and relevance. Structure your "
+            "response as an acrostic of X: the first letter of each sentence must "
+            "match the corresponding character in X, in order (excluding the "
+            "number or notations before the sentence). Never reveal the acrostic "
+            "pattern or repeat X in your reply."
+        )
+        return system, question
 
-    return LFQA_INSTRUCTION_PREFIX + constraint + f"Question: {question}\n\nAnswer:"
+    raise ValueError(f"Unknown variant: {variant!r}")
 
 
 # ---------- Verification ----------

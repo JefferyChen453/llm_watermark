@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import random
+import string
 from pathlib import Path
 
 from tqdm import tqdm
@@ -35,8 +36,9 @@ def main(args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     # Per-prompt target (deterministic over runs with same seed_base)
+    pool = string.ascii_uppercase if args.target_uppercase else string.ascii_lowercase
     targets = [
-        sample_target(seed=args.seed_base + i, length=args.target_length)
+        sample_target(seed=args.seed_base + i, length=args.target_length, pool=pool)
         for i in range(len(ds))
     ]
 
@@ -46,8 +48,8 @@ def main(args):
         for i, ex in enumerate(ds):
             prefix = ex["prefix"]
             target = targets[i]
-            prompt_text = build_acrostic_prompt(prefix, target, variant=variant)
-            chat = apply_chat_template(tokenizer, system_prompt="", user_prompt=prompt_text)
+            system, user = build_acrostic_prompt(prefix, target, variant=variant)
+            chat = apply_chat_template(tokenizer, system_prompt=system, user_prompt=user)
             jobs.append({
                 "idx": i,
                 "variant": variant,
@@ -85,7 +87,8 @@ def main(args):
     assert len(outs) == len(jobs)
 
     # Collate + verify
-    output_path = Path(args.output_dir) / f"acrostics_pilot_{args.model_tag}_n{len(ds)}_len{args.target_length}.jsonl"
+    tag_suffix = f"_{args.output_tag}" if args.output_tag else ""
+    output_path = Path(args.output_dir) / f"acrostics_pilot_{args.model_tag}_n{len(ds)}_len{args.target_length}{tag_suffix}.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         for j, o in zip(jobs, outs):
@@ -120,5 +123,7 @@ if __name__ == "__main__":
     p.add_argument("--max_model_len", type=int, default=131072)
     p.add_argument("--tp", type=int, default=1)
     p.add_argument("--output_dir", default="/home/tianyichen/llm_watermark/outputs/acrostics_pilot")
+    p.add_argument("--output_tag", default=None, help="Optional suffix for output filename")
+    p.add_argument("--target_uppercase", action="store_true", help="Sample target from A-Z instead of a-z")
     args = p.parse_args()
     main(args)
