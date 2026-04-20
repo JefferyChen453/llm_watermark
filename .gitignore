@@ -133,6 +133,7 @@ data
 *.ipynb
 temp*
 .cursor
+.codex
 debug
 *CLAUDE*
 vault
