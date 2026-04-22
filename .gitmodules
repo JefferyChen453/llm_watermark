@@ -1,6 +1,4 @@
 [submodule "verl"]
 	path = verl
 	url = git@github.com:JefferyChen453/verl.git
-[submodule "Unigram-Watermark"]
-	path = Unigram-Watermark
-	url = git@github.com:XuandongZhao/Unigram-Watermark.git
+
