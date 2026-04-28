@@ -8,26 +8,40 @@ from gptwm import GPTWatermarkDetector
 # Globals for worker processes (set by pool initializer)
 _worker_tokenizer = None
 _worker_config = None
+_worker_emb_length = None
+
+
+def _safe_emb_length(tokenizer, config) -> int:
+    """Mask length covering every possible token id, robust across tokenizer families.
+
+    Some tokenizers (e.g. Gemma) ship with `config.vocab_size == tokenizer.vocab_size`,
+    breaking the strict `model_emb_length > vocab_size` assertion in gptwm.py.
+    """
+    max_id = max(tokenizer.get_vocab().values())
+    cfg_size = getattr(config, 'vocab_size', 0) or 0
+    return max(cfg_size, max_id + 1, tokenizer.vocab_size + 1)
 
 
 def _init_worker(model_name: str):
-    """Initialize tokenizer and config in each worker process."""
-    global _worker_tokenizer, _worker_config
+    """Initialize tokenizer and config in each worker process. `model_name` here is
+    the *detection* tokenizer — the caller already resolved alt vs actor."""
+    global _worker_tokenizer, _worker_config, _worker_emb_length
     if "decapoda-research-llama-7B-hf" in model_name:
         _worker_tokenizer = LlamaTokenizer.from_pretrained(model_name)
     else:
-        _worker_tokenizer = AutoTokenizer.from_pretrained(model_name)
+        _worker_tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         if _worker_tokenizer.pad_token is None:
             _worker_tokenizer.pad_token = _worker_tokenizer.eos_token
     _worker_tokenizer.padding_side = "left"
-    _worker_config = AutoConfig.from_pretrained(model_name)
+    _worker_config = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    _worker_emb_length = _safe_emb_length(_worker_tokenizer, _worker_config)
 
 
 def _detect_chunk(chunk_and_args):
     """Run detection on a chunk of data. Uses global tokenizer/config set by initializer."""
     chunk, args_dict = chunk_and_args
     tokenizer = _worker_tokenizer
-    config = _worker_config
+    emb_length = _worker_emb_length
     detector_cache = {}
     min_tokens = args_dict["test_min_tokens"]
     wm_key = args_dict["wm_key"]
@@ -38,7 +52,7 @@ def _detect_chunk(chunk_and_args):
                 fraction=args_dict["fraction"],
                 strength=args_dict["strength"],
                 vocab_size=tokenizer.vocab_size,
-                model_emb_length=config.vocab_size,
+                model_emb_length=emb_length,
                 watermark_key=seed,
                 only_English=args_dict["only_English"],
                 tokenizer=tokenizer,
@@ -73,18 +87,23 @@ def main(args):
                     "seed": d.get("seed", args.wm_key)
                 })
 
+    # Resolve detection tokenizer (alt overrides actor). Mask + tokenization both use it.
+    detect_model = args.alt_tokenizer if args.alt_tokenizer else args.model_name
+
     if args.workers is None or args.workers <= 1:
-        if 'decapoda-research-llama-7B-hf' in args.model_name:
-            tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
+        if 'decapoda-research-llama-7B-hf' in detect_model:
+            tokenizer = LlamaTokenizer.from_pretrained(detect_model)
         else:
-            tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+            tokenizer = AutoTokenizer.from_pretrained(detect_model, trust_remote_code=True)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
-        model_config = AutoConfig.from_pretrained(args.model_name)
+        model_config = AutoConfig.from_pretrained(detect_model, trust_remote_code=True)
+        emb_length = _safe_emb_length(tokenizer, model_config)
     else:
         tokenizer = None
         model_config = None
+        emb_length = None
 
     def get_detector(seed: int) -> GPTWatermarkDetector:
         if seed not in detector_cache:
@@ -92,7 +111,7 @@ def main(args):
                 fraction=args.fraction,
                 strength=args.strength,
                 vocab_size=tokenizer.vocab_size,
-                model_emb_length=model_config.vocab_size,
+                model_emb_length=emb_length,
                 watermark_key=seed,
                 only_English=args.only_English,
                 tokenizer=tokenizer,
@@ -129,7 +148,7 @@ def main(args):
             with Pool(
                 args.workers,
                 initializer=_init_worker,
-                initargs=(args.model_name,),
+                initargs=(detect_model,),
             ) as pool:
                 chunk_results = list(
                     tqdm(
@@ -179,6 +198,10 @@ if __name__ == "__main__":
     parser.add_argument("--only_English", action="store_true")
     parser.add_argument("--combine_fraction", action="store_true")
     parser.add_argument("--workers", type=int, default=1, help="Number of processes for detection")
+    parser.add_argument("--alt_tokenizer", type=str, default=None,
+                        help="HF id of an alternate tokenizer used for tokenizing gen_completion AND "
+                             "constructing the green-list mask (must match generation-time --alt_tokenizer). "
+                             "If unset, --model_name's tokenizer is used.")
 
     args = parser.parse_args()
 

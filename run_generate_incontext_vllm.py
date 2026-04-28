@@ -34,16 +34,41 @@ def main(args):
     )
     if args.only_English:
         output_file = output_file.replace('.jsonl', '_only_English.jsonl')
+    if args.alt_tokenizer:
+        alt_slug = args.alt_tokenizer.replace('/', '-')
+        output_file = output_file.replace('.jsonl', f'_alt-{alt_slug}.jsonl')
 
-    # tokenizer (for watermark generation and tokenization)
+    # Actor tokenizer (for chat template; vLLM also loads its own internally from model_name)
     if 'decapoda-research-llama-7B-hf' in args.model_name:
-        tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
+        actor_tokenizer = LlamaTokenizer.from_pretrained(args.model_name)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+        actor_tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+        if actor_tokenizer.pad_token is None:
+            actor_tokenizer.pad_token = actor_tokenizer.eos_token
 
-    model_config = AutoConfig.from_pretrained(args.model_name)
+    actor_config = AutoConfig.from_pretrained(args.model_name)
+
+    # Watermark tokenizer (for green-list construction). Defaults to actor's, but can be
+    # overridden with --alt_tokenizer to test cross-vocab ICW (different family from actor).
+    if args.alt_tokenizer:
+        wm_tokenizer = AutoTokenizer.from_pretrained(args.alt_tokenizer, trust_remote_code=True)
+        if wm_tokenizer.pad_token is None:
+            wm_tokenizer.pad_token = wm_tokenizer.eos_token
+        wm_config = AutoConfig.from_pretrained(args.alt_tokenizer, trust_remote_code=True)
+        # Ensure mask length covers every token id (incl. special tokens). Some tokenizers
+        # (e.g. Gemma) have config.vocab_size == tokenizer.vocab_size, breaking the strict
+        # `model_emb_length > vocab_size` assertion in gptwm.py — pad by max-id+1.
+        wm_max_id = max(wm_tokenizer.get_vocab().values())
+        wm_vocab_size = wm_tokenizer.vocab_size
+        wm_emb_length = max(wm_config.vocab_size, wm_max_id + 1, wm_vocab_size + 1)
+    else:
+        wm_tokenizer = actor_tokenizer
+        wm_vocab_size = actor_tokenizer.vocab_size
+        wm_emb_length = actor_config.vocab_size
+
+    # Back-compat aliases used downstream (logits-WM still keys on actor's vocab/config).
+    tokenizer = actor_tokenizer
+    model_config = actor_config
 
     # seed_list = list(range(1, args.seed_num + 1))
     seed_list = list(range(0, 1))
@@ -84,13 +109,18 @@ def main(args):
 
     print("Loading vLLM model...")
     if args.add_logits_wm:
+        if args.alt_tokenizer:
+            raise ValueError(
+                "--alt_tokenizer is incompatible with --add_logits_wm: "
+                "logit-bias requires the watermark vocab to match the actor's vocab."
+            )
         set_watermark_config(
             fraction=args.fraction,
             strength=args.strength,
-            vocab_size=tokenizer.vocab_size,
-            model_emb_length=model_config.vocab_size,
+            vocab_size=actor_tokenizer.vocab_size,
+            model_emb_length=actor_config.vocab_size,
             only_English=args.only_English,
-            tokenizer=tokenizer,
+            tokenizer=actor_tokenizer,
         )
         llm = LLM(
             **llm_kwargs,
@@ -115,21 +145,23 @@ def main(args):
         indices = batch["idx"]
         batch_seeds = [seed_list[idx % len(seed_list)] for idx in indices]
 
-        # Build per-sample incontext prompts (prompt depends on seed)
+        # Build per-sample incontext prompts (prompt depends on seed). Green list is
+        # constructed in `wm_tokenizer` space (alt or actor), then rendered to plain
+        # strings; the actor's chat template tokenizes those strings independently.
         input_prompts = []
         for i, seed in enumerate(batch_seeds):
             wm_gen = InContextWatermarkGenerator(
                 fraction=args.fraction,
-                vocab_size=tokenizer.vocab_size,
-                model_emb_length=model_config.vocab_size,
+                vocab_size=wm_vocab_size,
+                model_emb_length=wm_emb_length,
                 watermark_key=seed,
                 only_English=args.only_English,
-                tokenizer=tokenizer,
+                tokenizer=wm_tokenizer,
             )
             green_token_string = wm_gen.get_green_token_string(shuffle=args.shuffle_green_tokens)
             dataset_type = batch.get("dataset_type", ["lfqa"] * len(indices))[i]
             system_prompt = get_incontext_system_prompt(dataset_type, green_token_string)
-            input_prompts.append(apply_chat_template(tokenizer, system_prompt, batch["prefix"][i]))
+            input_prompts.append(apply_chat_template(actor_tokenizer, system_prompt, batch["prefix"][i]))
 
         if args.add_logits_wm:
             sampling_params_list = [
@@ -143,13 +175,16 @@ def main(args):
 
         outputs = []
         for i, out in enumerate(outputs_vllm):
-            outputs.append(json.dumps({
+            row = {
                 "prefix": batch["prefix"][i],
                 "input_prompt": input_prompts[i],
                 "gold_completion": batch["gold_completion"][i],
                 "gen_completion": out.outputs[0].text,
                 "seed": batch_seeds[i],
-            }, ensure_ascii=False))
+            }
+            if args.alt_tokenizer:
+                row["alt_tokenizer"] = args.alt_tokenizer
+            outputs.append(json.dumps(row, ensure_ascii=False))
 
         with open(output_file, "a") as f:
             f.write("\n".join(outputs) + "\n")
@@ -182,6 +217,11 @@ if __name__ == "__main__":
     parser.add_argument("--only_English", action="store_true")
     parser.add_argument("--shuffle_green_tokens", action="store_true",
                         help="Shuffle green token order per sample (use for training; omit for val/test to enable vLLM prefix caching)")
+    parser.add_argument("--alt_tokenizer", type=str, default=None,
+                        help="HF id of an alternate tokenizer (e.g. meta-llama/Llama-3.1-8B). "
+                             "When set, the green-list mask + in-context prompt are built from this "
+                             "vocab instead of --model_name's. Actor still generates with its own tokenizer. "
+                             "Incompatible with --add_logits_wm.")
 
     # Data parameters
     parser.add_argument_group("Data")
