@@ -67,6 +67,315 @@ def extract_first_letters(text: str) -> str:
     return "".join(letters)
 
 
+# ---------- Strict extractor (forward-walk validation) ----------
+#
+# Design (replaces the old LIST_MARKER_BEFORE_RE lookbehind which had a bug:
+# any sentence whose preceding sentence ended in a single-letter word like
+# "time." was wrongly rejected as a list-marker. See vault/04-27 analysis.)
+#
+# Two layers:
+#
+#   Layer 1 — sentence boundary detection (`_find_sentence_starts_strict`):
+#     Find candidate sentence start positions. Catches MORE patterns than the
+#     loose extractor: any [.!?] + whitespace, plus paragraph breaks (\n\n),
+#     plus position 0. Doesn't filter on what comes after the boundary —
+#     leaves that to layer 2.
+#
+#   Layer 2 — per-position validation (`_validate_and_extract`):
+#     For each candidate position, walk forward through allowed prefix chars
+#     (whitespace + opening quotes/brackets), then inspect the next char and
+#     classify:
+#       * regular letter, NOT followed by ":.) + space"  -> 'valid'
+#       * letter followed by ":.) + space"               -> 'cheat:list-letter'
+#         (single-letter heading like "A. Foo" / "A: Bar" / "A) Baz")
+#       * digit, with 1-2 digits + ":.)" + space         -> 'cheat:list-num'
+#         (numbered list like "1. " / "12. ")
+#       * markdown emphasis chars (* _ ~ `)              -> 'cheat:bold' / 'cheat:code'
+#         (model wraps first letter in **B**old / `B`ackticks etc.)
+#       * markdown heading char (#)                      -> 'cheat:heading'
+#       * blockquote (>)                                 -> 'cheat:quote'
+#       * bullet list (- +)                              -> 'cheat:bullet'
+#       * anything else                                  -> 'invalid'
+#
+# Only 'valid' positions contribute a letter to the final fl string.
+
+# Sentence boundary for strict mode — broader than loose to catch cheat-prefixed
+# sentences (so they can be explicitly rejected, not silently lost). Lookahead
+# accepts: letter, digit, markdown chars (* _ ~ # > - + `), opening punctuation
+# (" ' ( [). Opening punctuation is needed for sentences like
+# `said. (Dogs run too.) Fish swim.` where the next sentence starts with `(`.
+_SENT_BOUNDARY_STRICT_RE = re.compile(
+    r"""(?x)
+    (?<=[.!?])
+    [\"')\]]*
+    \s+
+    (?=[A-Za-z\d\*_~\#\>\-\+`\(\[\"'])
+    """
+)
+# Paragraph break (handles cases without trailing [.!?])
+_PARA_BREAK_RE = re.compile(r"\n\n+\s*(?=\S)")
+
+# Pattern matching a list-marker context immediately before a sentence start,
+# i.e., the candidate position is the "next word after a list marker". The
+# marker char (1-2 digits or a single letter) MUST be isolated — preceded by
+# start-of-string or whitespace — to avoid false-positives like "...time."
+# where 'e' is the last letter of "time", not an isolated marker.
+_LIST_MARKER_BEFORE_RE = re.compile(
+    r"(?:^|(?<=\s))(?:\d{1,2}|[A-Za-z])[:.\)]\s+$"
+)
+# Window size for the backward look. Needs to be large enough to capture
+# "  12. " (5 chars) plus context buffer. Not so large that it picks up
+# unrelated earlier markers.
+_LIST_MARKER_LOOKBACK = 10
+
+# ---------- Population-level cheat thresholds ----------
+# Per-position validation can't tell apart "X word" patterns that are legitimate
+# article/pronoun starts (e.g., "A common phenomenon", "I think") from cheats
+# where the model splits the acrostic letter from the rest of the word ("M any
+# sources" / "I t is" / "W hile"). A population-level rule fixes this: if the
+# pattern dominates the response (>70% of sentences), it's structural cheat;
+# otherwise it's an occasional legitimate use.
+#
+# Similar rule for tiny "sentences" — single-letter or very short fragments
+# the model emits to inflate acrostic count (e.g., "D\n\n" between paragraphs).
+# If >30% of sentences are <5 chars, the response is using tiny-sentence cheat.
+
+_LETTER_SPACE_THRESHOLD = 0.70  # >70% of sentences are "X + space + letter" → all cheat
+_TINY_SENTENCE_THRESHOLD = 0.30  # >30% of sentences are <5 chars → all tiny cheat
+_TINY_SENTENCE_LEN = 5
+
+# Chars allowed before the first letter (whitespace + opening quotes/brackets).
+# A natural sentence may legitimately start with `("Hello,` or `'A friend...`.
+_ALLOWED_PRE_CHARS = frozenset(" \t\n\r\"'([")
+
+# Cheat-marker chars — any of these as the first non-whitespace char rejects.
+_CHEAT_MARKER_CLASS = {
+    '*': 'cheat:bold',     # **B**old / *I*talic
+    '_': 'cheat:bold',     # _U_nderline / __bold__
+    '~': 'cheat:bold',     # ~~strike~~
+    '`': 'cheat:code',     # `B`acktick
+    '#': 'cheat:heading',  # ## Heading
+    '>': 'cheat:quote',    # > Blockquote
+    '-': 'cheat:bullet',   # - Bullet
+    '+': 'cheat:bullet',   # + Bullet
+}
+
+
+def _find_sentence_starts_strict(text: str) -> List[int]:
+    """Find candidate sentence-start positions for strict mode.
+
+    Includes:
+      * position 0 (start of text)
+      * after [.!?] + whitespace (broader lookahead than loose extractor)
+      * after paragraph break (\\n\\n)
+    """
+    starts = {0}
+    for m in _SENT_BOUNDARY_STRICT_RE.finditer(text):
+        starts.add(m.end())
+    for m in _PARA_BREAK_RE.finditer(text):
+        starts.add(m.end())
+    return sorted(starts)
+
+
+def _validate_and_extract(text: str, idx: int) -> Tuple[str, str]:
+    """Walk forward from a candidate sentence start, classify the sentence.
+
+    Returns (letter, status) where letter is '' unless status == 'valid'.
+    Status is one of: 'valid' | 'cheat:bold' | 'cheat:heading' | 'cheat:quote'
+    | 'cheat:bullet' | 'cheat:code' | 'cheat:list-num' | 'cheat:list-letter'
+    | 'cheat:list-followup' (next-word after a list marker) | 'invalid'.
+    """
+    n = len(text)
+
+    # Backward look: is this position the "next word" after an isolated
+    # list marker? E.g., "1. Apples" / "A. Foo" / "12) Bar". If so, the
+    # candidate position is content INSIDE a list item, not a clean sentence.
+    window = text[max(0, idx - _LIST_MARKER_LOOKBACK): idx]
+    if _LIST_MARKER_BEFORE_RE.search(window):
+        return ('', 'cheat:list-followup')
+
+    pos = idx
+    # Skip allowed pre-letter chars (whitespace + opening quotes/brackets)
+    while pos < n and text[pos] in _ALLOWED_PRE_CHARS:
+        pos += 1
+    if pos >= n:
+        return ('', 'invalid')
+
+    c = text[pos]
+
+    # Markdown / blockquote / bullet / code prefix
+    if c in _CHEAT_MARKER_CLASS:
+        return ('', _CHEAT_MARKER_CLASS[c])
+
+    # Numbered list "1. " / "12. " / "1) " / "12) "
+    if c.isdigit():
+        peek = pos
+        while peek < n and text[peek].isdigit():
+            peek += 1
+        digits_len = peek - pos
+        if digits_len <= 2 and peek < n and text[peek] in '.):' \
+                and (peek + 1 >= n or text[peek + 1].isspace()):
+            return ('', 'cheat:list-num')
+        return ('', 'invalid')
+
+    # Letter at start
+    if c.isalpha():
+        # Single-letter heading "A. " / "A: " / "A) "
+        if pos + 1 < n and text[pos + 1] in ':).':
+            if pos + 2 >= n or text[pos + 2].isspace():
+                return ('', 'cheat:list-letter')
+        return (c.lower(), 'valid')
+
+    return ('', 'invalid')
+
+
+def _is_letter_space_pattern(text: str, idx: int) -> bool:
+    """Check if the sentence at idx matches the 'X + space + letter' pattern.
+
+    Examples that match:
+      "A common phenomenon..."  (article + word, legitimate when rare)
+      "I think it works."       (pronoun + word, legitimate when rare)
+      "M any sources..."        (cheat: split first letter off "Many")
+      "A Roman from 700..."     (article + proper noun, legitimate)
+
+    Per-position validation can't tell these apart — population-level rule
+    decides via _LETTER_SPACE_THRESHOLD.
+    """
+    n = len(text)
+    pos = idx
+    while pos < n and text[pos] in _ALLOWED_PRE_CHARS:
+        pos += 1
+    return (pos + 2 < n
+            and text[pos].isalpha()
+            and text[pos + 1] == ' '
+            and text[pos + 2].isalpha())
+
+
+def _apply_population_cheats(diag: List[dict]) -> None:
+    """Re-classify per-sentence status based on population-level patterns.
+
+    Two rules, applied in order:
+      1. Letter-space split (idx=217-style cheat): if >_LETTER_SPACE_THRESHOLD
+         of total sentences match the "X + space + letter" pattern, mark all
+         currently-valid letter-space sentences as cheat:letter-space-split.
+      2. Tiny sentence (idx=153-style cheat): if >_TINY_SENTENCE_THRESHOLD of
+         total sentences are <_TINY_SENTENCE_LEN chars, mark all currently-
+         valid tiny sentences as cheat:tiny-sentence.
+
+    Modifies diag in place. Only re-marks sentences that are currently 'valid'
+    (so existing cheat:bold / cheat:list-num / etc. classifications stay).
+    """
+    n_total = len(diag)
+    if n_total == 0:
+        return
+
+    # Rule 1: letter-space split
+    n_letter_space = sum(1 for d in diag if d.get('is_letter_space'))
+    if n_letter_space / n_total > _LETTER_SPACE_THRESHOLD:
+        for d in diag:
+            if d.get('is_letter_space') and d['status'] == 'valid':
+                d['status'] = 'cheat:letter-space-split'
+                d['letter'] = ''
+
+    # Rule 2: tiny sentence
+    n_tiny = sum(1 for d in diag if d.get('sent_len', 0) < _TINY_SENTENCE_LEN)
+    if n_tiny / n_total > _TINY_SENTENCE_THRESHOLD:
+        for d in diag:
+            if d.get('sent_len', 0) < _TINY_SENTENCE_LEN and d['status'] == 'valid':
+                d['status'] = 'cheat:tiny-sentence'
+                d['letter'] = ''
+
+
+def extract_first_letters_strict_with_diagnosis(text: str) -> List[dict]:
+    """Same logic as ``extract_first_letters_strict`` but returns per-sentence
+    diagnostic info. Used for case studies and debugging.
+
+    Each item is ``{'pos', 'excerpt', 'letter', 'status', 'sent_len',
+    'is_letter_space'}``. ``status`` may be re-classified by population-level
+    rules (see ``_apply_population_cheats``).
+    """
+    starts = _find_sentence_starts_strict(text)
+    out = []
+    for i, s in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        sent_content = text[s:end].strip()
+        letter, status = _validate_and_extract(text, s)
+        excerpt = text[s: min(s + 80, len(text))].replace("\n", "\\n")
+        out.append({
+            'pos': s,
+            'excerpt': excerpt,
+            'letter': letter,
+            'status': status,
+            'sent_len': len(sent_content),
+            'is_letter_space': _is_letter_space_pattern(text, s),
+        })
+    _apply_population_cheats(out)
+    return out
+
+
+def extract_first_letters_nltk(text: str) -> str:
+    """ICW-paper-faithful extractor (acrostics.py:141-150 in yepengliu/In-Context-Watermarks).
+
+    Uses NLTK's Punkt sentence tokenizer + ``re.search(r'[A-Za-z]')`` to grab
+    the FIRST alphabetic character anywhere in the sentence (not just the first
+    char). Empty / no-letter sentences yield '0'. Returned string is lowercase.
+
+    NOTE: this is more permissive than ``extract_first_letters_strict`` —
+    sentences like ``1. Apples`` yield 'a' (skipping ``1.``), which strict mode
+    rejects as a heading-cheat pattern.
+    """
+    import re as _re
+    from nltk.tokenize import sent_tokenize  # lazy import; nltk is optional dep
+    letters: List[str] = []
+    for sent in sent_tokenize(text):
+        m = _re.search(r"[A-Za-z]", sent)
+        if m:
+            letters.append(m.group().lower())
+        else:
+            letters.append("0")
+    return "".join(letters)
+
+
+def extract_first_letters_strict(text: str) -> str:
+    """Strict variant of ``extract_first_letters`` — rejects reward-hack
+    patterns and accepts only clean plain-text sentence openings.
+
+    Cheat patterns rejected:
+
+    Per-position (via ``_validate_and_extract``):
+      * Markdown emphasis: ``**B**old``, ``*I*talic``, ``_U_nderline``,
+        ``~S~trike``, ```B`acktick``
+      * Markdown heading: ``# A``, ``## B``, ``### C``
+      * Blockquote: ``> A``
+      * Bullet list: ``- A``, ``+ A``
+      * Numbered list: ``1. A``, ``12. B``, ``1) A``
+      * Single-letter heading: ``A. ``, ``A: ``, ``A) ``
+      * List-followup: content of list item ("Apples" in "1. Apples")
+
+    Population-level (via ``_apply_population_cheats``):
+      * Letter-space split: if >70% sentences match "X + space + letter"
+        (e.g., model writes "M any sources" / "I t is" instead of "Many
+        sources" / "It is"), mark all letter-space sentences cheat.
+      * Tiny sentence: if >30% sentences are <5 chars (e.g., model writes
+        single-letter "D\\n\\n" between paragraphs to inflate acrostic),
+        mark all tiny sentences cheat.
+
+    Sentence boundary detection (broader than loose extractor):
+      * After [.!?] + whitespace + (letter | digit | markdown char)
+      * After paragraph break ``\\n\\n``
+      * Position 0 (start of text)
+
+    Cheat-prefixed sentences are detected as candidate sentences but their
+    letter is NOT included in the output. For per-sentence diagnostics use
+    ``extract_first_letters_strict_with_diagnosis``.
+    """
+    return "".join(
+        d['letter']
+        for d in extract_first_letters_strict_with_diagnosis(text)
+        if d['status'] == 'valid'
+    )
+
+
 # ---------- Decision points at token level ----------
 
 def find_decision_points_tokens(
@@ -118,6 +427,22 @@ def build_acrostic_prompt(
     variant='weak':      only give the target string (in user prompt; system empty for v1 parity).
     variant='none':      no constraint (clean prompt; system empty).
     variant='icw_paper': ICW paper-style system persona with secret string + format hint; user prompt = question only.
+    variant='clean_v1':  simplified rewrite of paper_dts — no `mod n`, plain
+                         behavioral rules (filler/skip allowed), 3-attempt cap
+                         per letter, 2 worked examples covering clean + skip
+                         corner case. <secret> in system tail, <query> wraps the
+                         user message; rules forbid tag echoing in the response.
+    variant='clean_v2_noex' / 'clean_v2_1ex' / 'clean_v2_chat':
+                         No XML, inline 'Secret:'/'Query:' in user message,
+                         lowercase secret. v2_1ex includes 1 system-side example;
+                         v2_chat puts example as multi-turn chat (use
+                         build_acrostic_chat_messages for that).
+    variant='clean_v3_noex' / 'clean_v3_1ex':
+                         Same as v2 but: (a) rule 4 explicitly forbids markdown
+                         emphasis and visual highlighting on first letters, (b)
+                         secret displayed UPPERCASE (matches paper_dts and
+                         natural sentence-start case), (c) example intro changed
+                         and outro removed for less mimic risk.
     """
     if variant == "none":
         return "", LFQA_INSTRUCTION_PREFIX + f"Question: {question}\n\nAnswer:"
@@ -214,7 +539,276 @@ def build_acrostic_prompt(
         )
         return system, question
 
+    # ---------- v2 variants (post-leak rework) ----------
+
+    if variant in ("clean_v2_noex", "clean_v2_1ex"):
+        system = _build_clean_v2_system(variant)
+        user = f"Secret: {tgt}\nQuery: {question}"
+        return system, user
+
+    if variant == "clean_v2_chat":
+        # Multi-turn chat variant — caller must use build_acrostic_chat_messages
+        # instead of build_acrostic_prompt. Raise here so misuse is loud.
+        raise ValueError(
+            "variant='clean_v2_chat' is multi-turn. "
+            "Use build_acrostic_chat_messages() instead."
+        )
+
+    # ---------- v3 variants (anti-markdown + UPPERCASE secret) ----------
+    # Differences from v2:
+    #   * Rule 4 explicitly forbids markdown emphasis (`**bold**`, `*italic*`,
+    #     headings, lists) and any visual marker on first letters
+    #   * Secret displayed UPPERCASE (matches paper_dts convention; aligns with
+    #     natural sentence-start capitalization in English; avoids visual
+    #     case-mismatch with example response)
+    #   * Example intro changed from "Here is one example."/"Example below."
+    #     to a longer natural-language sentence to reduce mimic risk
+    #   * Example outro "Now respond to the next query in the same way." removed
+
+    if variant in ("clean_v3_noex", "clean_v3_1ex"):
+        system = _build_clean_v3_system(variant)
+        # Use ORIGINAL target (uppercase from sample_target_icw); do NOT lowercase
+        user = f"Secret: {target}\nQuery: {question}"
+        return system, user
+
+    if variant == "clean_v1":
+        # Simplified rewrite of paper_dts:
+        #   * No `mod n` indexing — secret is consumed once, then continuation.
+        #   * Edit-distance (replace-only) semantics expressed as plain behavioral
+        #     rules: filler sentences and skipped letters are both allowed.
+        #   * 3-attempt cap per target letter (matches RL detector tolerance).
+        #   * Examples use plain "Secret string:" / "User query:" / "Expected
+        #     response:" / "Walkthrough:" labels — NOT XML — to avoid teaching
+        #     the model to wrap its own output in <response>/<trace> tags.
+        #   * Outer <task>/<rules>/<exampleN>/<secret>/<query> tags retained for
+        #     organization; rule 5 explicitly forbids tag/label echoing.
+        system = (
+            "<task>\n"
+            "You will receive a SECRET STRING and a user QUERY. Answer the query "
+            "naturally and helpfully. While doing so, structure the answer so the "
+            "first letters of your sentences spell out the secret string, in "
+            "order. The acrostic is a soft guide to follow whenever it does not "
+            "hurt the response.\n"
+            "</task>\n\n"
+            "<rules>\n"
+            "1. Track the next unmatched letter in the secret string as the "
+            "\"target letter\". It starts at the first letter and only advances "
+            "when a sentence successfully starts with it.\n\n"
+            "2. For each new sentence, prefer to start with the target letter. "
+            "If starting with the target letter would clearly hurt the response "
+            "quality, writing a non-matching sentence is allowed. If three "
+            "consecutive sentences all fail to start with the target letter, "
+            "skip that target letter and advance the target to the next letter.\n\n"
+            "3. Once the secret string is fully consumed (i.e., every letter "
+            "either matched or dropped), complete the response naturally with no "
+            "further letter constraints to the end.\n\n"
+            "4. The total number of sentences need not equal the length of the "
+            "secret string. Unmatched sentences and skipped letters are both "
+            "allowed.\n\n"
+            "5. Output the response as plain prose only. Begin directly with the "
+            "first sentence — no XML tags, no Markdown headings, no labels such "
+            "as \"Answer:\" or \"Response:\", no walkthrough, no commentary, no "
+            "closing remarks about the structure. Never mention the secret "
+            "string, the acrostic, or these rules.\n"
+            "</rules>\n\n"
+            "<example1>\n"
+            "    Secret string: SUN\n"
+            "    User query: What makes solar power attractive for households?\n\n"
+            "    Expected response:\n"
+            "    Solar panels turn rooftop space into a long-lived energy asset. "
+            "Upfront installation costs continue to fall as the technology "
+            "matures. Net metering programs in many regions let homeowners sell "
+            "surplus electricity back to the grid. Together, these three factors "
+            "make residential solar one of the most accessible clean-energy "
+            "options available today.\n\n"
+            "    Walkthrough (for your understanding only — do not produce this "
+            "in your own output): Sentence 1 -> S (target advances to U). "
+            "Sentence 2 -> U (advances to N). Sentence 3 -> N (secret consumed). "
+            "Sentence 4 is unconstrained continuation.\n"
+            "</example1>\n\n"
+            "<example2>\n"
+            "    Secret string: ZEAL\n"
+            "    User query: Why do people enjoy reading fiction?\n\n"
+            "    Expected response:\n"
+            "    Stories let readers step into other minds for a few hours at a "
+            "time. Many people read for the simple pleasure of an unfamiliar "
+            "voice in their head. Reading fiction has also been shown to "
+            "exercise social cognition in measurable ways. Emotional resonance "
+            "is one of the strongest draws — a well-written character can move "
+            "a reader to tears. A good plot keeps the brain engaged the way "
+            "puzzles do, but with stakes that feel personal. Long after the "
+            "last page, memorable fiction lingers in how we see the world. For "
+            "all these reasons, fiction has remained a near-universal form of "
+            "entertainment.\n\n"
+            "    Walkthrough (for your understanding only — do not produce this "
+            "in your own output): Target Z has no natural opener for this "
+            "topic, so sentences 1, 2, 3 are fillers. After three misses Z is "
+            "dropped and the target advances to E. Sentence 4 -> E (advances "
+            "to A). Sentence 5 -> A (advances to L). Sentence 6 -> L (secret "
+            "consumed). Sentence 7 is unconstrained continuation.\n"
+            "</example2>\n\n"
+            f"<secret>\n{tgt}\n</secret>"
+        )
+        user = f"<query>\n{question}\n</query>"
+        return system, user
+
     raise ValueError(f"Unknown variant: {variant!r}")
+
+
+# ---------- v2 prompt building blocks (no XML, inline Secret/Query) ----------
+
+CLEAN_V2_TASK_RULES = (
+    "You will receive a SECRET STRING and a user QUERY. Answer the query "
+    "naturally and helpfully. While doing so, structure the answer so the "
+    "first letters of your sentences spell out the secret string, in order. "
+    "Treat the acrostic as a soft guide that you follow whenever it does not "
+    "hurt the response.\n\n"
+    "Rules:\n"
+    "  1. Track the next unmatched letter in the secret string as the target "
+    "letter. It starts at the first letter and only advances when a sentence "
+    "successfully starts with it.\n"
+    "  2. Prefer to start each new sentence with the target letter. If "
+    "starting with the target letter would clearly hurt the response quality, "
+    "write a non-matching sentence instead. After three consecutive misses, "
+    "drop that letter and advance to the next.\n"
+    "  3. Once the secret string is fully consumed, continue answering "
+    "naturally with no further letter constraints.\n"
+    "  4. Output the response as plain prose only."
+)
+
+
+# Reference example used by clean_v2_1ex (in-system) and clean_v2_chat
+# (multi-turn). Secret + query + 18-sentence answer (acrostic over secret) +
+# one continuation sentence. No bold/inline markers — natural multi-paragraph
+# prose. The secret is shown lowercase to match runtime convention.
+CLEAN_V2_EXAMPLE_SECRET = "ANCIENTFORESTMUSIC"
+CLEAN_V2_EXAMPLE_QUERY = "What role do honeybees play in maintaining biodiversity?"
+CLEAN_V2_EXAMPLE_RESPONSE = (
+    "Apart from the honey they produce, bees serve as crucial pollinators for "
+    "the majority of flowering plants on Earth. Nearly one-third of the food "
+    "we eat depends on insect pollination, with honeybees doing most of the "
+    "heavy lifting. Cross-pollination by bees ensures genetic diversity among "
+    "plant populations and enables them to adapt to environmental change. It "
+    "also supports the survival of countless wild species that rely on those "
+    "plants for food and habitat.\n\n"
+    "Entire ecosystems can collapse when pollinator populations decline "
+    "sharply, as has been observed in several regions. Native bee species, in "
+    "particular, often pollinate plants that introduced honeybees cannot "
+    "reach. Their steady decline due to habitat loss and pesticide use has "
+    "become a major scientific concern. Forests, grasslands, and wetlands "
+    "all depend on this pollinator network to maintain their plant "
+    "communities.\n\n"
+    "One key threat is the spread of monoculture farming, which leaves little "
+    "for bees to forage between crop seasons. Researchers have found that "
+    "landscapes with diverse vegetation support measurably healthier bee "
+    "populations. Efforts to plant pollinator-friendly gardens and restore "
+    "wildflower meadows have gained traction in many countries. Some farmers "
+    "now intentionally include flower strips in their fields to support "
+    "local bees year-round.\n\n"
+    "This kind of integration benefits both crop yields and the wider "
+    "biodiversity of surrounding ecosystems. Many countries are also moving "
+    "to ban or restrict the most harmful neonicotinoid pesticides. Urban "
+    "beekeeping and rooftop hives have become increasingly common in cities "
+    "worldwide.\n\n"
+    "Schools have begun teaching children about the importance of these tiny "
+    "but indispensable workers. In the long run, broad public awareness may "
+    "be the strongest tool conservationists have. Conservation of bees is, "
+    "in essence, conservation of our food security and ecological "
+    "resilience. Without coordinated action across farmers, governments, and "
+    "consumers, the global pollinator crisis will only deepen in the coming "
+    "decades."
+)
+
+
+def _build_clean_v2_system(variant: str) -> str:
+    """Build system message for clean_v2_noex / clean_v2_1ex.
+
+    - noex: rules only, no example
+    - 1ex : rules + 1 in-system example (secret/query/response inline) +
+            transition phrase to the real query
+    """
+    if variant == "clean_v2_noex":
+        return CLEAN_V2_TASK_RULES
+    if variant == "clean_v2_1ex":
+        return (
+            CLEAN_V2_TASK_RULES + "\n\n"
+            "Here is one example.\n\n"
+            f"Secret: {CLEAN_V2_EXAMPLE_SECRET.lower()}\n"
+            f"Query: {CLEAN_V2_EXAMPLE_QUERY}\n\n"
+            f"{CLEAN_V2_EXAMPLE_RESPONSE}\n\n"
+            "Now respond to the next query in the same way."
+        )
+    raise ValueError(f"_build_clean_v2_system unknown variant: {variant!r}")
+
+
+# ---------- v3: stronger rule 4 (anti-markdown + anti-emphasis) ----------
+
+CLEAN_V3_TASK_RULES = (
+    "You will receive a SECRET STRING and a user QUERY. Answer the query "
+    "naturally and helpfully. While doing so, structure the answer so the "
+    "first letters of your sentences spell out the secret string, in order. "
+    "Treat the acrostic as a soft guide that you follow whenever it does not "
+    "hurt the response.\n\n"
+    "Rules:\n"
+    "  1. Track the next unmatched letter in the secret string as the target "
+    "letter. It starts at the first letter and only advances when a sentence "
+    "successfully starts with it.\n"
+    "  2. Prefer to start each new sentence with the target letter. If "
+    "starting with the target letter would clearly hurt the response quality, "
+    "write a non-matching sentence instead. After three consecutive misses, "
+    "drop that letter and advance to the next.\n"
+    "  3. Once the secret string is fully consumed, continue answering "
+    "naturally with no further letter constraints.\n"
+    "  4. Write in plain narrative prose. Do not use any markdown formatting "
+    "(no `**bold**`, no `*italic*`, no headings or lists), and do not "
+    "visually highlight first letters in any way."
+)
+
+
+def _build_clean_v3_system(variant: str) -> str:
+    """Build system message for clean_v3_noex / clean_v3_1ex.
+
+    Same example content as v2 (ANCIENTFORESTMUSIC + bee query + 18-sentence
+    response). Differences:
+      * UPPERCASE secret in example
+      * Example intro: "To show you what a good answer looks like, here is one
+        example." (longer natural-language sentence, less mimic-able than
+        terse "Here is one example.")
+      * No transition outro after the example
+    """
+    if variant == "clean_v3_noex":
+        return CLEAN_V3_TASK_RULES
+    if variant == "clean_v3_1ex":
+        return (
+            CLEAN_V3_TASK_RULES + "\n\n"
+            "To show you what a good answer looks like, here is one example.\n\n"
+            f"Secret: {CLEAN_V2_EXAMPLE_SECRET}\n"
+            f"Query: {CLEAN_V2_EXAMPLE_QUERY}\n\n"
+            f"{CLEAN_V2_EXAMPLE_RESPONSE}"
+        )
+    raise ValueError(f"_build_clean_v3_system unknown variant: {variant!r}")
+
+
+def build_acrostic_chat_messages(question: str, target: str,
+                                 variant: str = "clean_v2_chat") -> list:
+    """Multi-turn chat messages for chat-format v2 variant.
+
+    Returns a list of {role, content} dicts suitable for
+    ``apply_chat_template_messages(tokenizer, messages)``.
+    """
+    tgt = target.lower()
+    if variant == "clean_v2_chat":
+        return [
+            {"role": "system", "content": CLEAN_V2_TASK_RULES},
+            {"role": "user",
+             "content": f"Secret: {CLEAN_V2_EXAMPLE_SECRET.lower()}\n"
+                        f"Query: {CLEAN_V2_EXAMPLE_QUERY}"},
+            {"role": "assistant", "content": CLEAN_V2_EXAMPLE_RESPONSE},
+            {"role": "user", "content": f"Secret: {tgt}\nQuery: {question}"},
+        ]
+    raise ValueError(
+        f"build_acrostic_chat_messages: unknown multi-turn variant {variant!r}"
+    )
 
 
 # ---------- Verification ----------
@@ -278,3 +872,28 @@ def sample_target(seed: int, length: int = 4, pool: str = string.ascii_lowercase
     import random
     rng = random.Random(seed)
     return "".join(rng.choices(pool, k=length))
+
+
+# ICW paper letter pool (acrostics.py:103-130 in yepengliu/In-Context-Watermarks):
+# excludes J K Q V X Z (frequency < 1.5%). 20 letters total.
+ICW_LETTER_POOL = "ABCDEFGHILMNOPRSTUWY"
+
+
+def sample_target_icw(seed: int, length: int = 18,
+                      pool: str = ICW_LETTER_POOL,
+                      uppercase: bool = True) -> str:
+    """ICW-paper-faithful secret string sampler.
+
+    Uses uniform sampling over a 20-letter pool (a-z minus J K Q V X Z).
+    Default length=18 (between paper's 20 and our pilot range).
+
+    Args:
+        seed: per-sample RNG seed for reproducibility.
+        length: target string length (paper uses 20, we use 18).
+        pool: letter pool (default = ICW_LETTER_POOL = 20 letters).
+        uppercase: if True, return UPPERCASE string (matches paper); else lowercase.
+    """
+    import random
+    rng = random.Random(seed)
+    s = "".join(rng.choices(pool, k=length))
+    return s if uppercase else s.lower()

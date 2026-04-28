@@ -46,6 +46,27 @@ def apply_chat_template(tokenizer, system_prompt: str, user_prompt: str) -> str:
         )
     return f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
 
+
+def apply_chat_template_messages(tokenizer, messages: list) -> str:
+    """Format a multi-turn message list using the tokenizer's chat template.
+
+    Each item must be a {"role": ..., "content": ...} dict. Roles can be
+    'system' / 'user' / 'assistant'. Falls back to plain-text rendering
+    when no chat template is available.
+    """
+    if hasattr(tokenizer, 'apply_chat_template') and tokenizer.chat_template is not None:
+        return tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "user").capitalize()
+        parts.append(f"{role}: {msg.get('content', '')}")
+    return "\n\n".join(parts) + "\n\nAssistant:"
+
 # ------------------------------ Map functions ------------------------------
 def make_prompt_mapper(tokenizer, system_prompt: str, *, tokenize: bool = False):
     """Create a HuggingFace Dataset ``.map()`` function that applies a chat

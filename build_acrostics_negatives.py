@@ -19,10 +19,13 @@ def main(args):
     print(f"Loaded {len(rows)} rows from {args.prompt_file}")
 
     pool = string.ascii_uppercase if args.target_uppercase else string.ascii_lowercase
-    targets = [
-        sample_target(seed=args.seed_base + i, length=args.target_length, pool=pool)
-        for i in range(len(rows))
-    ]
+    if args.fixed_target:
+        targets = [args.fixed_target] * len(rows)
+    else:
+        targets = [
+            sample_target(seed=args.seed_base + i, length=args.target_length, pool=pool)
+            for i in range(len(rows))
+        ]
 
     output_path = Path(args.output_dir) / (
         f"acrostics_pilot_{args.model_tag}_n{len(rows)}_len{args.target_length}"
@@ -67,5 +70,6 @@ if __name__ == "__main__":
     p.add_argument("--target_uppercase", action="store_true")
     p.add_argument("--output_dir", default="/home/tianyichen/llm_watermark/outputs/acrostics_pilot")
     p.add_argument("--output_tag", default="paperdts")
+    p.add_argument("--fixed_target", default=None, help="Use this target for all rows (eval mode)")
     args = p.parse_args()
     main(args)

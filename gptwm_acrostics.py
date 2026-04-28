@@ -44,6 +44,7 @@ class AcrosticsDetector:
         tokenizer,
         n_resample: int = 200,
         seed: int = 0,
+        strict: bool = True,
     ):
         assert tokenizer is not None, "tokenizer required"
         assert isinstance(target, str) and len(target) > 0, "target must be non-empty string"
@@ -51,6 +52,10 @@ class AcrosticsDetector:
         self.tokenizer = tokenizer
         self.n_resample = int(n_resample)
         self.seed = int(seed)
+        # strict=True (default for RL reward) blocks single-letter heading +
+        # numbered-list reward-hacking patterns. Set strict=False to reproduce
+        # paper-faithful detection (eval AUC numbers).
+        self.strict = bool(strict)
 
     def _decode(self, token_list: List[int]) -> str:
         # Skip special tokens so e.g. <|im_end|>, pad tokens don't leak into text
@@ -61,6 +66,7 @@ class AcrosticsDetector:
         stat = compute_lev_zstat(
             text=text, target=self.target,
             n_resample=self.n_resample, seed=self.seed,
+            strict=self.strict,
         )
         return float(stat.z)
 

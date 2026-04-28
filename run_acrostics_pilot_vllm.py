@@ -37,10 +37,15 @@ def main(args):
 
     # Per-prompt target (deterministic over runs with same seed_base)
     pool = string.ascii_uppercase if args.target_uppercase else string.ascii_lowercase
-    targets = [
-        sample_target(seed=args.seed_base + i, length=args.target_length, pool=pool)
-        for i in range(len(ds))
-    ]
+    if args.fixed_target:
+        # All prompts share one target — used for evaluation matrix where we
+        # want a single canonical X across the whole test set.
+        targets = [args.fixed_target] * len(ds)
+    else:
+        targets = [
+            sample_target(seed=args.seed_base + i, length=args.target_length, pool=pool)
+            for i in range(len(ds))
+        ]
 
     # Build (prompt_text, target, variant, idx) tuples for all conditions
     jobs = []
@@ -125,5 +130,6 @@ if __name__ == "__main__":
     p.add_argument("--output_dir", default="/home/tianyichen/llm_watermark/outputs/acrostics_pilot")
     p.add_argument("--output_tag", default=None, help="Optional suffix for output filename")
     p.add_argument("--target_uppercase", action="store_true", help="Sample target from A-Z instead of a-z")
+    p.add_argument("--fixed_target", default=None, help="If set, use this target for ALL prompts (eval mode)")
     args = p.parse_args()
     main(args)
